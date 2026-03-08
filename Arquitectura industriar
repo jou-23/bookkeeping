@@ -1,0 +1,656 @@
+
+
+
+
+ARQUITECTURA MODULAR
+Sistema Operativo de Negocios por Industria
+Estilo Dolibarr / NextERP / Zoho One
+
+Cada industria arma SU plataforma como LEGO
+Modulos horizontales + Modulos verticales + Marketplace
+
+Marzo 2026 | v1.0
+
+1. Filosofia: No es UNA App, es un Sistema Operativo
+EL PROBLEMA CON EL SOFTWARE ACTUAL
+Dolibarr es gratis pero feo, lento, y necesitas un dev para instalarlo. NextERP/Odoo es poderoso pero cuesta $24-72/user/mes y es complejo. Zoho es bonito pero no entiende fiscalidad latina ni habla espanol de verdad. NINGUN ERP modular esta disenado mobile-first, con IA nativa, bilingue real, y con fiscalidad LATAM + USA integrada. Ese es nuestro espacio.
+
+1.1 Tres Tipos de Modulos
+Tipo	Que Es	Ejemplos	Quien los Construye
+CORE	Siempre activos. Base de toda la plataforma. No se pueden desactivar.	Auth, Organizations, Users, Notifications, Billing, Audit Log, Dashboard Hub	Nosotros (equipo central)
+HORIZONTALES	Modulos genericos que sirven a CUALQUIER industria. El usuario elige cuales activar.	Libros, Factura, Contactos, Fiscal, Inventario, Nomina, Proyectos, Gastos, POS, Tienda, Soporte, Marketing	Nosotros (equipo central)
+VERTICALES	Modulos especificos para UNA industria. Solo aparecen si la org es de esa industria.	Despacho (cargo), Recetas (restaurante), Habitaciones (hotel), Pacientes (clinica), Obra (construccion), Rutas (delivery)	Nosotros + TERCEROS (marketplace)
+
+CLAVE: Los modulos VERTICALES usan la misma infraestructura (Event Bus, schemas, auth, storage) que los horizontales. La unica diferencia es que son especificos de una industria y se activan segun el campo industry de la organizacion.
+
+1.2 Como Funciona: El Usuario Arma su Plataforma
+PASO 1: Usuario se registra
+  -> Selecciona pais (US / MX / CO)
+  -> Selecciona industria: Transporte, Restaurante, Construccion, Tienda, Servicios, Otro
+
+PASO 2: Sistema sugiere configuracion
+  -> Basado en la industria, pre-selecciona modulos recomendados
+  -> Ejemplo: Restaurante -> LIBROS + FACTURA + CONTACTOS + FISCAL + INVENTARIO + POS + RECETAS
+  -> Ejemplo: Cargo -> LIBROS + FACTURA + CONTACTOS + FISCAL + DESPACHO + FLOTA
+  -> El usuario puede agregar o quitar modulos libremente
+
+PASO 3: Plataforma se configura dinamicamente
+  -> Sidebar solo muestra modulos activos
+  -> Dashboard solo muestra widgets relevantes
+  -> BD solo crea schemas de modulos activos
+  -> Pricing se calcula basado en modulos seleccionados
+
+PASO 4: Conforme el negocio crece, agrega modulos
+  -> Click en 'Agregar modulo' -> activa NOMINA
+  -> Automaticamente: sidebar, dashboard, schemas, eventos se expanden
+  -> CERO downtime. CERO migracion. Solo activar.
+
+2. Configuraciones por Industria - Que Necesita Cada Una
+Aqui definimos EXACTAMENTE que modulos usa cada tipo de negocio. SI = modulo horizontal activo. VERTICAL = modulo especifico de la industria (custom).
+2.1 TRANSPORTE / CARGO / LOGISTICA
+Empresa de cargo, mudanzas, paqueteria, fleteo, transporte de mercancias
+Modulo	Activo	Como lo Usa Cargo
+CORE (Hub)	SI	Dashboard con: envios activos, entregas pendientes, facturacion del dia, flota en ruta
+LIBROS	SI	Ingresos por envio, gastos de combustible, mantenimiento, peajes, seguros
+FACTURA	SI	Factura por envio con detalle: origen, destino, peso, volumen. CFDI con carta porte (MX)
+CONTACTOS	SI	Clientes (remitentes), destinatarios, proveedores de combustible, talleres
+FISCAL	SI	Deducciones vehiculares, depreciacion de flota, IVA de servicios de transporte
+INVENTARIO	NO	No aplica directamente (no venden productos)
+NOMINA	SI	Choferes, ayudantes, despachadores. Viaticos, bonos por viaje
+PROYECTOS	NO	No aplica
+GASTOS	SI	Viaticos de chofer, combustible con foto de ticket, peajes, casetas
+POS	NO	No aplica
+DESPACHO	VERTICAL	MODULO VERTICAL: ordenes de envio, tracking, asignacion a unidad, estados (recolectado, en transito, entregado, devuelto)
+FLOTA	VERTICAL	MODULO VERTICAL: unidades, mantenimiento preventivo, rendimiento km/l, documentos (seguro, verificacion, permisos SCT)
+CARTA PORTE	VERTICAL	MODULO VERTICAL: complemento Carta Porte 3.1 para CFDI. Ubicaciones, mercancias, autotransporte federal
+RUTAS	VERTICAL	MODULO VERTICAL: rutas frecuentes, tarifas por ruta, optimizacion, integracion Google Maps
+
+Eventos especificos de Cargo
+Evento	Emite	Escucha	Accion
+shipment.created	DESPACHO	FACTURA, LIBROS	Crea factura draft con datos del envio. Crea transaction pendiente
+shipment.delivered	DESPACHO	FACTURA, CONTACTOS	Cambia factura a enviable. Actualiza historial del cliente
+shipment.returned	DESPACHO	FACTURA, LIBROS	Genera nota de credito. Reversa transaction
+fleet.maintenance_due	FLOTA	CORE (notif)	Alerta: Unidad X necesita mantenimiento en Y km
+fuel.logged	GASTOS	LIBROS, FLOTA	Transaction de gasto. Actualiza rendimiento km/l de la unidad
+carta_porte.generated	CARTA PORTE	FACTURA	Complementa el CFDI con datos de carta porte
+
+2.2 RESTAURANTE / FOOD SERVICE
+Restaurante, taqueria, cafeteria, food truck, catering, panaderia
+Modulo	Activo	Como lo Usa Restaurante
+CORE (Hub)	SI	Ventas del dia, platos mas vendidos, costo de alimentos, margen del dia
+LIBROS	SI	Ingresos POS, gastos de insumos, renta, servicios, nomina
+FACTURA	SI	Factura global diaria (MX). Factura individual si cliente pide. Propinas
+CONTACTOS	SI	Proveedores de insumos, clientes frecuentes, servicio de catering
+FISCAL	SI	IVA de alimentos (0% vs 16% segun tipo), IEPS en bebidas alcoholicas
+INVENTARIO	SI	Insumos: carne, verduras, bebidas. Control de merma. Ordenes a proveedor
+NOMINA	SI	Meseros, cocineros, ayudantes. Propinas, turnos
+PROYECTOS	NO	No aplica
+GASTOS	SI	Compras de mercado (foto ticket), gas, limpieza
+POS	SI	Caja, mesas, comanda a cocina, split de cuenta, propinas
+RECETAS	VERTICAL	MODULO VERTICAL: receta de cada platillo, costo por porcion, ingredientes necesarios, rendimiento por receta
+MESAS	VERTICAL	MODULO VERTICAL: layout del restaurante, estado de mesas, reservaciones, tiempo de ocupacion
+DELIVERY	VERTICAL	MODULO VERTICAL: pedidos online propios (sin Uber/Rappi), riders, zonas de entrega, tracking
+MENU DIGITAL	VERTICAL	MODULO VERTICAL: menu QR, fotos, precios, disponibilidad en tiempo real segun inventario
+
+Eventos especificos de Restaurante
+Evento	Emite	Escucha	Accion
+ticket.closed	POS	INVENTARIO, LIBROS, RECETAS	Reduce ingredientes segun recetas vendidas. Registra ingreso
+recipe.costed	RECETAS	POS	Actualiza costo del platillo en POS para calcular margen
+stock.low_ingredient	INVENTARIO	CORE, RECETAS	Alerta: ingrediente X bajo. RECETAS marca platillos afectados
+table.occupied	MESAS	POS	Abre ticket en POS asociado a mesa N
+delivery.completed	DELIVERY	LIBROS, FACTURA	Registra venta con envio. Genera factura si aplica
+menu.item_unavailable	INVENTARIO	MENU DIGITAL	Oculta platillo del menu digital si no hay ingredientes
+
+2.3 CONSTRUCCION / CONTRATISTA
+Contratista general, subcontratista, remodelador, plomero, electricista, pintor
+Modulo	Activo	Como lo Usa Construccion
+CORE (Hub)	SI	Proyectos activos, rentabilidad, pagos pendientes, materiales por pedir
+LIBROS	SI	Ingresos por proyecto/contrato, gastos de material, mano de obra, subcontratos
+FACTURA	SI	Factura por avance de obra, estimaciones, retenciones (5% ISR en MX)
+CONTACTOS	SI	Clientes, subcontratistas, ferreterias, proveedores de material
+FISCAL	SI	Deducciones por vehiculo, herramienta, home office. 1099-NEC a subcontratistas (US)
+INVENTARIO	SI	Materiales: cemento, varilla, tuberia. Stock por bodega/obra
+NOMINA	SI	Albaniles, maestros, ayudantes. Pago por semana. IMSS/workers comp
+PROYECTOS	SI	Cada obra es un proyecto: presupuesto, avance, fases, rentabilidad
+GASTOS	SI	Materiales comprados en obra, renta de equipo, viaticos
+POS	NO	No aplica
+ESTIMACIONES	VERTICAL	MODULO VERTICAL: crear presupuestos/cotizaciones detalladas por concepto de obra (mano de obra + material + overhead). Plantillas por tipo de trabajo
+AVANCE DE OBRA	VERTICAL	MODULO VERTICAL: % de avance por fase, fotos de progreso, bitacora de obra, reportes al cliente
+SUBCONTRATOS	VERTICAL	MODULO VERTICAL: contratos con subs, ordenes de trabajo, control de pago por avance, retenciones
+EQUIPO	VERTICAL	MODULO VERTICAL: maquinaria y herramienta. Ubicacion (en que obra esta), mantenimiento, depreciacion
+
+Eventos especificos de Construccion
+Evento	Emite	Escucha	Accion
+estimate.approved	ESTIMACIONES	PROYECTOS, FACTURA	Crea proyecto con budget. Genera factura de anticipo
+phase.completed	AVANCE DE OBRA	FACTURA, PROYECTOS	Genera factura de avance. Actualiza % del proyecto
+subcontract.paid	SUBCONTRATOS	LIBROS, FISCAL	Transaction de gasto. FISCAL verifica si necesita 1099/retencion
+material.purchased	GASTOS	INVENTARIO, LIBROS, PROYECTOS	Agrega stock. Gasto contra el proyecto. Rentabilidad se actualiza
+equipment.moved	EQUIPO	PROYECTOS	Actualiza que equipo esta en que obra
+
+2.4 CLINICA / CONSULTORIO MEDICO
+Consultorio, clinica dental, consultorio psicologico, fisioterapia, veterinaria
+Modulo	Activo	Como lo Usa Clinica
+CORE (Hub)	SI	Citas del dia, pacientes por atender, cobranza pendiente, ingresos del mes
+LIBROS	SI	Ingresos por consulta, gastos de insumos medicos, renta, equipo
+FACTURA	SI	Factura por consulta/procedimiento. CFDI con clave SAT de servicios medicos
+CONTACTOS	SI	Pacientes (con datos extra), proveedores de insumos, laboratorios, seguros
+FISCAL	SI	Servicios medicos exentos de IVA (MX). Deducciones de equipo medico
+INVENTARIO	SI	Insumos medicos, medicamentos, material dental. Control de caducidad
+NOMINA	SI	Enfermeras, recepcionista, asistentes. Honorarios a especialistas
+PROYECTOS	NO	No aplica
+GASTOS	SI	Insumos, laboratorio, equipo, educacion continua
+POS	SI	Cobro en recepcion por consulta/procedimiento
+PACIENTES	VERTICAL	MODULO VERTICAL: expediente clinico (basico, no EHR completo), historial de consultas, alergias, antecedentes. NOTA: NO reemplaza un EHR certificado
+CITAS	VERTICAL	MODULO VERTICAL: agenda, disponibilidad, recordatorios por WhatsApp/SMS, confirmacion. Portal del paciente para agendar online
+RECETAS MED	VERTICAL	MODULO VERTICAL: generar receta medica digital, e-prescripcion, catalogo de medicamentos
+
+Eventos especificos de Clinica
+Evento	Emite	Escucha	Accion
+appointment.confirmed	CITAS	CORE (notif)	Recordatorio al paciente 24h antes por WhatsApp
+appointment.completed	CITAS	POS, FACTURA, PACIENTES	Abre cobro en POS. Prepara factura. Registra consulta en historial
+consultation.charged	POS	LIBROS, FISCAL	Ingreso registrado. Verifica exencion de IVA
+supply.used	PACIENTES	INVENTARIO	Reduce stock de insumo usado en consulta/procedimiento
+supply.expired	INVENTARIO	CORE (notif)	Alerta: medicamento X vence en Y dias
+
+2.5 TIENDA / RETAIL / DISTRIBUIDOR
+Tienda de ropa, abarrotes, ferreteria, distribuidora, mayorista
+Modulo	Activo	Como lo Usa Retail
+CORE (Hub)	SI	Ventas del dia, productos mas vendidos, inventario bajo, margen del dia
+LIBROS	SI	Ventas, compras a proveedores, gastos operativos, costo de venta
+FACTURA	SI	Factura de venta, factura global diaria, notas de credito, devoluciones
+CONTACTOS	SI	Clientes mayoristas, proveedores, marcas representadas
+FISCAL	SI	IVA trasladado/acreditado, DIOT de proveedores, ISR por actividad
+INVENTARIO	SI	Productos, SKUs, codigos de barra, multiples bodegas, traspasos, conteos
+NOMINA	SI	Vendedores, cajeros, bodegueros. Comisiones por venta
+PROYECTOS	NO	No aplica
+GASTOS	SI	Compras, empaques, envios, publicidad
+POS	SI	Caja, lector de codigo de barras, cliente frecuente, descuentos, devoluciones
+TIENDA ONLINE	SI	E-commerce: catalogo, carrito, pago, envio. Sync stock con tienda fisica
+MARKETING	SI	Email/WhatsApp a clientes. Promociones, cupones, programa de lealtad
+LISTAS DE PRECIOS	VERTICAL	MODULO VERTICAL: precios por cliente, por volumen, por temporada. Precio mayoreo vs menudeo
+COMISIONES	VERTICAL	MODULO VERTICAL: comisiones a vendedores por venta. % por producto o categoria. Liquidacion quincenal
+
+2.6 SERVICIOS PROFESIONALES / AGENCIA / FREELANCER
+Agencia de marketing, consultoria, despacho contable, abogado, disenador, dev freelance
+Modulo	Activo	Como lo Usa Servicios
+CORE (Hub)	SI	Proyectos activos, horas del mes, facturacion pendiente, pipeline de ventas
+LIBROS	SI	Ingresos por proyecto/cliente, gastos operativos, suscripciones, tools
+FACTURA	SI	Factura por proyecto, por hora, recurrente mensual, anticipo
+CONTACTOS	SI	Clientes, prospectos (pipeline CRM), contratistas, partners
+FISCAL	SI	Schedule C completo (US). Quarterly estimates. Home office deduction. ISR honorarios (MX)
+INVENTARIO	NO	No aplica (vende servicios, no productos)
+NOMINA	SI	Empleados de la agencia. Freelancers externos (1099/honorarios)
+PROYECTOS	SI	Cada cliente/campana es un proyecto. Tareas, entregables, deadlines, horas, rentabilidad
+GASTOS	SI	Software, viajes, comidas de negocio, equipo
+POS	NO	No aplica
+PROPUESTAS	VERTICAL	MODULO VERTICAL: crear propuestas comerciales con scope, timeline, pricing. Enviar al cliente. Firma electronica. Conversion a proyecto
+TIME TRACKING	VERTICAL	MODULO VERTICAL: timer por tarea, reporte de horas semanal, comparar estimado vs real. Base para facturacion por hora
+CONTRATOS	VERTICAL	MODULO VERTICAL: plantillas de contrato, firma electronica, renovaciones, alertas de vencimiento
+
+2.7 HOTEL / HOSPEDAJE / AIRBNB
+Hotel, motel, hostal, cabanas, Airbnb, renta vacacional
+Modulo	Activo	Como lo Usa Hotel
+CORE (Hub)	SI	Ocupacion hoy, check-ins pendientes, ingresos del dia, habitaciones disponibles
+LIBROS	SI	Ingresos por noche, gastos de limpieza, amenidades, mantenimiento
+FACTURA	SI	Factura al check-out. CFDI de hospedaje con impuesto ISH. Factura corporativa
+CONTACTOS	SI	Huespedes, agencias de viaje, plataformas OTA, proveedores
+FISCAL	SI	ISH (Impuesto Sobre Hospedaje 2-5%). IVA. Lodging tax (US)
+INVENTARIO	SI	Amenidades, blancos, limpieza. Minibar
+NOMINA	SI	Recepcion, limpieza, mantenimiento, seguridad
+PROYECTOS	NO	No aplica
+GASTOS	SI	Mantenimiento, reparaciones, suministros
+POS	SI	Cobro en recepcion, restaurante del hotel, bar
+HABITACIONES	VERTICAL	MODULO VERTICAL: inventario de habitaciones, tipos, tarifas por temporada, estatus (limpia, sucia, en mantenimiento, ocupada)
+RESERVACIONES	VERTICAL	MODULO VERTICAL: calendario, disponibilidad, check-in/out, motor de reservaciones online, channel manager (Booking, Airbnb)
+HOUSEKEEPING	VERTICAL	MODULO VERTICAL: asignacion de limpieza, inspecciones, reportes de dano, inventario de blancos
+
+3. Arquitectura Tecnica de Modulos Verticales
+3.1 Como se Construye un Modulo Vertical
+Cada modulo vertical sigue EXACTAMENTE la misma estructura que un modulo horizontal. La unica diferencia es que se activa condicionalmente.
+// Estructura de un modulo vertical: DESPACHO (cargo)
+
+packages/
+  vertical-despacho/
+    |-- schema.prisma        # Tablas: despacho.shipments, despacho.tracking_events
+    |-- events.ts            # Eventos que emite y escucha
+    |-- routes.ts            # API endpoints: /v1/shipments, /v1/tracking
+    |-- service.ts           # Logica de negocio
+    |-- validators.ts        # Zod schemas de validacion
+    |-- types.ts             # TypeScript interfaces
+
+apps/web/src/modules/
+  despacho/
+    |-- pages/               # UI: lista envios, crear envio, tracking
+    |-- components/          # Cards, forms, maps
+    |-- hooks/               # useShipments, useTracking
+    |-- api/                 # Fetch layer
+
+// REGISTRO del modulo en el sistema:
+// archivo: packages/vertical-despacho/manifest.ts
+
+export const MANIFEST = {
+  id: 'despacho',
+  name: { es: 'Despacho', en: 'Dispatch' },
+  description: { es: 'Gestion de envios y logistica', en: 'Shipping and logistics' },
+  icon: 'truck',
+  industries: ['transporte', 'logistica', 'paqueteria', 'mudanzas'],
+  category: 'vertical',
+  requires: ['contactos', 'libros'],  // Modulos horizontales requeridos
+  optional: ['factura', 'gastos'],      // Modulos que mejoran la experiencia
+  pricing: { usd: 14.99, mxn: 249 },   // Precio adicional por mes
+  schemas: ['despacho'],                // Schemas de BD que necesita
+  events: {
+    emits: ['shipment.created', 'shipment.delivered', 'shipment.returned'],
+    listens: ['invoice.paid', 'contact.updated'],
+  },
+  routes: '/v1/shipments/*',
+  sidebar: {
+    label: { es: 'Despacho', en: 'Dispatch' },
+    icon: 'truck',
+    children: [
+      { label: { es: 'Envios', en: 'Shipments' }, path: '/shipments' },
+      { label: { es: 'Tracking', en: 'Tracking' }, path: '/tracking' },
+      { label: { es: 'Rutas', en: 'Routes' }, path: '/routes' },
+    ]
+  },
+  widgets: [
+    { id: 'active_shipments', label: { es: 'Envios activos', en: 'Active shipments' } },
+    { id: 'deliveries_today', label: { es: 'Entregas hoy', en: 'Deliveries today' } },
+  ]
+};
+
+CADA modulo (horizontal o vertical) tiene un manifest.ts que define: id, nombre, industrias, dependencias, eventos, rutas, sidebar, widgets, y precio. El sistema lee estos manifests para configurarse dinamicamente.
+
+3.2 Motor de Registro Dinamico
+Asi es como la plataforma sabe que modulos mostrar, que schemas crear, y que eventos escuchar:
+// module-registry.ts - El cerebro de la plataforma
+
+import { MANIFESTS } from './all-manifests';
+
+class ModuleRegistry {
+  private modules: Map<string, ModuleManifest> = new Map();
+
+  // Al iniciar la app, registrar TODOS los modulos disponibles
+  init() {
+    for (const manifest of MANIFESTS) {
+      this.modules.set(manifest.id, manifest);
+    }
+  }
+
+  // Obtener modulos activos para una organizacion
+  getActiveModules(org: Organization): ModuleManifest[] {
+    return org.plan_modules
+      .map(id => this.modules.get(id))
+      .filter(Boolean);
+  }
+
+  // Obtener sidebar items para esta org
+  getSidebar(org: Organization): SidebarItem[] {
+    return this.getActiveModules(org)
+      .map(m => m.sidebar)
+      .filter(Boolean);
+  }
+
+  // Obtener widgets del dashboard para esta org
+  getDashboardWidgets(org: Organization): Widget[] {
+    return this.getActiveModules(org)
+      .flatMap(m => m.widgets || []);
+  }
+
+  // Verificar si un modulo esta activo
+  isModuleActive(org: Organization, moduleId: string): boolean {
+    return org.plan_modules.includes(moduleId);
+  }
+
+  // Obtener modulos recomendados para una industria
+  getRecommendedModules(industry: string): ModuleManifest[] {
+    const horizontals = MANIFESTS.filter(m => m.category === 'horizontal');
+    const verticals = MANIFESTS.filter(m => 
+      m.category === 'vertical' && m.industries.includes(industry)
+    );
+    return [...horizontals, ...verticals];
+  }
+
+  // Activar un modulo para una org
+  async activateModule(org: Organization, moduleId: string) {
+    const manifest = this.modules.get(moduleId);
+    if (!manifest) throw new Error('Modulo no existe');
+
+    // Verificar dependencias
+    for (const dep of manifest.requires) {
+      if (!org.plan_modules.includes(dep)) {
+        throw new Error(`Requiere modulo: ${dep}`);
+      }
+    }
+
+    // Crear schemas de BD si no existen
+    await createSchemas(manifest.schemas);
+
+    // Registrar event listeners
+    await registerEvents(manifest.events);
+
+    // Agregar a plan_modules
+    org.plan_modules.push(moduleId);
+    await org.save();
+
+    // Actualizar billing
+    await updateSubscription(org, manifest.pricing);
+  }
+}
+
+3.3 Lazy Loading en Frontend
+Los modulos se cargan en el browser SOLO cuando el usuario navega a ellos. No se descarga codigo de modulos que no tiene activos.
+// router.tsx - Carga dinamica de modulos
+
+import { lazy, Suspense } from 'react';
+import { useOrg } from './hooks/useOrg';
+
+// Lazy import de CADA modulo
+const modulesMap = {
+  libros:      lazy(() => import('./modules/libros')),
+  factura:     lazy(() => import('./modules/factura')),
+  contactos:   lazy(() => import('./modules/contactos')),
+  fiscal:      lazy(() => import('./modules/fiscal')),
+  inventario:  lazy(() => import('./modules/inventario')),
+  nomina:      lazy(() => import('./modules/nomina')),
+  proyectos:   lazy(() => import('./modules/proyectos')),
+  gastos:      lazy(() => import('./modules/gastos')),
+  pos:         lazy(() => import('./modules/pos')),
+  tienda:      lazy(() => import('./modules/tienda')),
+  // VERTICALES
+  despacho:    lazy(() => import('./modules/despacho')),
+  flota:       lazy(() => import('./modules/flota')),
+  recetas:     lazy(() => import('./modules/recetas')),
+  mesas:       lazy(() => import('./modules/mesas')),
+  pacientes:   lazy(() => import('./modules/pacientes')),
+  citas:       lazy(() => import('./modules/citas')),
+  estimaciones: lazy(() => import('./modules/estimaciones')),
+  habitaciones: lazy(() => import('./modules/habitaciones')),
+  // ... mas modulos verticales
+};
+
+export function AppRouter() {
+  const { org } = useOrg();
+
+  // Solo generar rutas para modulos activos
+  const activeRoutes = org.plan_modules
+    .filter(id => modulesMap[id])
+    .map(id => ({
+      path: `/${id}/*`,
+      Component: modulesMap[id],
+    }));
+
+  return (
+    <Suspense fallback={<Loading />}>
+      <Routes>
+        <Route path='/' element={<HubDashboard />} />
+        {activeRoutes.map(r => (
+          <Route key={r.path} path={r.path} element={<r.Component />} />
+        ))}
+        <Route path='*' element={<ModuleNotActive />} />
+      </Routes>
+    </Suspense>
+  );
+}
+
+4. Marketplace de Modulos - Terceros Pueden Construir
+VISION A FUTURO (Ano 2+)
+Una vez que el core y los modulos horizontales estan estables, abrimos un MARKETPLACE donde desarrolladores externos pueden construir y vender modulos verticales. Exactamente como la Odoo App Store o el Zoho Marketplace. Un dev mexicano puede crear un modulo de 'Taller Mecanico' y venderlo a $99 MXN/mes. Nosotros tomamos 20% de comision. El dev gana 80%. Todos ganan.
+
+4.1 Que Necesita un Developer Externo para Crear un Modulo
+Lo que Proveemos	Descripcion
+Module SDK (npm package)	Libreria que abstrae auth, event bus, DB access, storage, notifications
+CLI Tool	npx tucontabilidad create-module 'nombre' -> genera estructura completa
+Sandbox Environment	Ambiente de pruebas con org fake y datos de ejemplo
+Documentation Portal	Guia completa con ejemplos, API reference, best practices
+Testing Framework	Suite de tests que el modulo debe pasar para publicarse
+Review Process	Revision de codigo, seguridad, y UX antes de aprobar publicacion
+Revenue Dashboard	El dev ve cuantas orgs usan su modulo y cuanto ha ganado
+
+4.2 Reglas del Marketplace
+Cada modulo DEBE tener un manifest.ts valido con todas las propiedades requeridas
+DEBE usar el Event Bus para comunicarse con otros modulos. NO puede hacer queries directos a schemas de otros modulos
+DEBE pasar security review: no puede acceder datos de otras organizaciones, no puede enviar datos a servidores externos sin consentimiento
+DEBE ser responsive (mobile-friendly) y seguir el design system de la plataforma
+DEBE soportar espanol e ingles minimo
+PUEDE usar tablas propias en un schema con prefijo del modulo (ej: ext_taller.*)
+PUEDE emitir eventos custom con prefijo (ej: ext_taller.vehicle_received)
+NO puede modificar tablas core ni de otros modulos
+NO puede bypassear el API Gateway ni el auth middleware
+Revenue split: 80% developer, 20% plataforma
+
+4.3 Ejemplos de Modulos Verticales que Terceros Podrian Construir
+Modulo	Industria	Que Hace	Precio Sugerido
+Taller Mecanico	Automotriz	Ordenes de servicio, diagnosticos, piezas, historial vehicular, fotos antes/despues	$149 MXN/mes
+Gym/Estudio	Fitness	Membresias, control de acceso, clases, pagos recurrentes, instructor schedule	$199 MXN/mes
+Inmobiliaria	Real Estate	Propiedades, visitas, contratos de renta/venta, comisiones, portal de propiedades	$249 MXN/mes
+Escuela/Academia	Educacion	Alumnos, inscripciones, pagos de colegiatura, calificaciones, asistencia	$199 MXN/mes
+Salon de Belleza	Belleza	Citas, servicios, estilistas, productos, historial de cliente, fotos	$149 MXN/mes
+Lavanderia	Servicios	Ordenes, peso/piezas, tracking de prendas, entregas, reclamos	$99 MXN/mes
+Veterinaria	Salud Animal	Pacientes (mascotas), duenos, historial clinico, vacunas, grooming	$199 MXN/mes
+Agrotech	Agricultura	Parcelas, ciclos de cultivo, insumos, rendimiento, clima, costos por hectarea	$299 MXN/mes
+Food Truck	Food Service	Ubicaciones, horarios, menu simplificado, POS mobile, ruta diaria	$99 MXN/mes
+Funeraria	Servicios	Planes, paquetes, servicios, pagos a plazos, documentacion legal	$199 MXN/mes
+
+POTENCIAL: Si 500 devs construyen modulos y cada uno tiene 100 clientes promedio pagando $150 MXN/mes, son 50,000 clientes x $30/mes comision = $1.5M USD/ano SOLO de marketplace. Esto sin contar los modulos propios.
+
+5. Tabla Maestra: Que Modulos Usa Cada Industria
+Vista rapida. X = activo. V = vertical especifico. - = no aplica.
+Modulo	Cargo	Restaurante	Construccion	Clinica	Retail	Servicios	Hotel
+LIBROS	X	X	X	X	X	X	X
+FACTURA	X	X	X	X	X	X	X
+CONTACTOS	X	X	X	X	X	X	X
+FISCAL	X	X	X	X	X	X	X
+INVENTARIO	-	X	X	X	X	-	X
+NOMINA	X	X	X	X	X	X	X
+PROYECTOS	-	-	X	-	-	X	-
+GASTOS	X	X	X	X	X	X	X
+POS	-	X	-	X	X	-	X
+TIENDA ONLINE	-	-	-	-	X	-	-
+MARKETING	-	-	-	-	X	-	-
+							
+V: Despacho	V	-	-	-	-	-	-
+V: Flota	V	-	-	-	-	-	-
+V: Carta Porte	V	-	-	-	-	-	-
+V: Rutas	V	-	V(rutas obra)	-	-	-	-
+V: Recetas	-	V	-	-	-	-	-
+V: Mesas	-	V	-	-	-	-	-
+V: Delivery	-	V	-	-	V	-	-
+V: Menu Digital	-	V	-	-	-	-	-
+V: Estimaciones	-	-	V	-	-	V	-
+V: Avance Obra	-	-	V	-	-	-	-
+V: Subcontratos	-	-	V	-	-	-	-
+V: Equipo	-	-	V	-	-	-	-
+V: Pacientes	-	-	-	V	-	-	-
+V: Citas	-	-	-	V	-	-	-
+V: Recetas Med	-	-	-	V	-	-	-
+V: Listas Precio	-	-	-	-	V	-	-
+V: Comisiones	-	-	-	-	V	-	V
+V: Propuestas	-	-	-	-	-	V	-
+V: Time Track	-	-	-	-	-	V	-
+V: Contratos	-	-	V	-	-	V	-
+V: Habitaciones	-	-	-	-	-	-	V
+V: Reservaciones	-	-	-	-	-	-	V
+V: Housekeeping	-	-	-	-	-	-	V
+
+6. El Concepto LEGO - Diagrama Final
+Asi es como el usuario ve la plataforma. Cada pieza es independiente pero encaja con las demas:
++================================================================+
+|                     PLATAFORMA CORE                            |
+|  [Auth] [Org] [Users] [Billing] [Notif] [Audit] [Hub]  [AI]   |
++================================================================+
+|                                                                |
+|  MODULOS HORIZONTALES (cualquier industria)                    |
+|  +--------+ +--------+ +--------+ +--------+ +--------+      |
+|  | LIBROS | |FACTURA | |CONTACT.| | FISCAL | | GASTOS |      |
+|  +--------+ +--------+ +--------+ +--------+ +--------+      |
+|  +--------+ +--------+ +--------+ +--------+ +--------+      |
+|  | INVENT.| | NOMINA | |PROYECT.| |  POS   | | TIENDA |      |
+|  +--------+ +--------+ +--------+ +--------+ +--------+      |
+|  +--------+ +--------+                                        |
+|  |SOPORTE | |MARKET. |                                        |
+|  +--------+ +--------+                                        |
+|                                                                |
++================================================================+
+|                                                                |
+|  MODULOS VERTICALES (por industria)                            |
+|                                                                |
+|  CARGO:    [Despacho] [Flota] [CartaPorte] [Rutas]            |
+|  RESTAUR:  [Recetas] [Mesas] [Delivery] [MenuDigital]         |
+|  CONSTRUC: [Estimac.] [AvanceObra] [Subcontr.] [Equipo]       |
+|  CLINICA:  [Pacientes] [Citas] [RecetasMed]                   |
+|  RETAIL:   [ListasPrec.] [Comisiones]                         |
+|  SERVICIO: [Propuestas] [TimeTrack] [Contratos]               |
+|  HOTEL:    [Habitac.] [Reservac.] [Housekeep.]                |
+|                                                                |
+|  MARKETPLACE: [TallerMec.] [Gym] [Inmob.] [Escuela] [...]    |
+|                                                                |
++================================================================+
+|                                                                |
+|  INTEGRACIONES EXTERNAS                                       |
+|  [Plaid] [Prometeo] [Stripe] [Facturama] [WhatsApp]           |
+|  [OpenAI] [Google Maps] [Twilio] [SendGrid] [S3]              |
+|                                                                |
++================================================================+
+
+CADA NEGOCIO SELECCIONA SUS PIEZAS:
+
+  Taqueria 'El Gordo':     CORE + LIBROS + FACTURA + FISCAL + POS + RECETAS
+  Cargo 'Transportes Cruz': CORE + LIBROS + FACTURA + FISCAL + DESPACHO + FLOTA
+  Agencia 'Pixel Studio':  CORE + LIBROS + FACTURA + FISCAL + PROYECTOS + TIME TRACK
+  Dentista 'Dra. Garcia':  CORE + LIBROS + FACTURA + FISCAL + PACIENTES + CITAS
+  Ferreteria 'Don Jose':   CORE + LIBROS + FACTURA + FISCAL + INVENTARIO + POS
+
+7. Schema de Base de Datos - Modulo Vertical Ejemplo: DESPACHO
+Para que el developer vea EXACTAMENTE como se estructura un modulo vertical en la BD.
+despacho.shipments
+Columna	Tipo	Descripcion
+id	UUID PK	
+org_id	UUID FK -> core.organizations	Multi-tenant
+shipment_number	VARCHAR(20)	Numero de guia autoincremental
+status	ENUM('draft','pickup_scheduled','picked_up','in_transit','out_for_delivery','delivered','returned','cancelled')	
+sender_contact_id	UUID FK -> contactos.contacts	Remitente
+receiver_name	VARCHAR(255)	Nombre destinatario
+receiver_phone	VARCHAR(20)	Telefono destinatario
+receiver_email	VARCHAR(255) NULLABLE	
+origin_address	JSONB	Direccion de recoleccion
+destination_address	JSONB	Direccion de entrega
+origin_city	VARCHAR(100)	Para busqueda rapida
+destination_city	VARCHAR(100)	Para busqueda rapida
+distance_km	DECIMAL(10,2) NULLABLE	Distancia calculada
+weight_kg	DECIMAL(10,2) NULLABLE	Peso de la carga
+volume_m3	DECIMAL(10,4) NULLABLE	Volumen
+pieces	INT DEFAULT 1	Numero de bultos
+description	VARCHAR(500)	Descripcion de la mercancia
+declared_value	DECIMAL(15,2) NULLABLE	Valor declarado (para seguro)
+service_type	ENUM('standard','express','same_day','freight')	
+price	DECIMAL(15,2)	Precio cobrado
+cost	DECIMAL(15,2) DEFAULT 0	Costo real (combustible, operador)
+vehicle_id	UUID FK NULLABLE -> despacho.vehicles	Unidad asignada
+driver_contact_id	UUID FK NULLABLE -> contactos.contacts	Chofer (type=employee)
+route_id	UUID FK NULLABLE -> despacho.routes	Ruta asignada
+pickup_date	TIMESTAMP NULLABLE	Fecha/hora de recoleccion
+estimated_delivery	TIMESTAMP NULLABLE	Fecha estimada de entrega
+actual_delivery	TIMESTAMP NULLABLE	Fecha real de entrega
+proof_of_delivery	VARCHAR(500) NULLABLE	Foto/firma de entrega en S3
+invoice_id	UUID FK NULLABLE -> factura.invoices	Factura generada
+notes	TEXT NULLABLE	
+metadata	JSONB DEFAULT '{}'	Data extra flexible
+created_at	TIMESTAMP	
+updated_at	TIMESTAMP	
+
+despacho.tracking_events
+Columna	Tipo	Descripcion
+id	UUID PK	
+shipment_id	UUID FK -> despacho.shipments	
+status	VARCHAR(50)	Estado en ese momento
+location	JSONB NULLABLE	{ lat, lng, address }
+description	VARCHAR(300)	Ej: Paquete recolectado en bodega
+photo_url	VARCHAR(500) NULLABLE	Evidencia fotografica
+recorded_by	UUID FK -> core.users	Quien registro el evento
+created_at	TIMESTAMP	
+
+despacho.vehicles
+Columna	Tipo	Descripcion
+id	UUID PK	
+org_id	UUID FK	
+plate_number	VARCHAR(15)	Placas
+type	ENUM('van','truck','trailer','motorcycle')	
+brand	VARCHAR(100)	Marca
+model	VARCHAR(100)	Modelo
+year	INT	Ano
+capacity_kg	DECIMAL(10,2)	Capacidad de carga
+capacity_m3	DECIMAL(10,2) NULLABLE	Capacidad volumetrica
+fuel_type	ENUM('gasoline','diesel','electric','hybrid')	
+current_km	INT	Kilometraje actual
+next_maintenance_km	INT NULLABLE	Proximo servicio
+insurance_expiry	DATE NULLABLE	Vencimiento de seguro
+permit_sct	VARCHAR(50) NULLABLE	Permiso SCT (MX)
+status	ENUM('available','in_route','maintenance','inactive')	
+current_driver_id	UUID FK NULLABLE -> contactos.contacts	Chofer asignado
+gps_device_id	VARCHAR(100) NULLABLE	ID del GPS tracker
+photo_url	VARCHAR(500) NULLABLE	
+documents	JSONB DEFAULT '[]'	Array de docs: seguro, tarjeta circ, verificacion
+created_at	TIMESTAMP	
+
+8. Flujo de Onboarding por Industria
+PANTALLA 1: Bienvenido a TuContabilidad
+  -> Registrate con email o Google
+
+PANTALLA 2: Cuentanos de tu negocio
+  -> Nombre del negocio
+  -> Pais (US / MX / CO)
+  -> INDUSTRIA (selector visual con iconos):
+     [Camion] Transporte / Cargo
+     [Tenedor] Restaurante / Food Service
+     [Casco] Construccion / Contratista
+     [Cruz] Clinica / Salud
+     [Bolsa] Tienda / Retail
+     [Laptop] Servicios / Agencia
+     [Cama] Hotel / Hospedaje
+     [Engrane] Otro (personalizado)
+
+PANTALLA 3: Te recomendamos estos modulos
+  -> Basado en industria, mostramos modulos PRE-SELECCIONADOS
+  -> Ejemplo si eligio 'Transporte':
+     [x] Libros (Contabilidad)      INCLUIDO
+     [x] Factura (Facturacion)       INCLUIDO
+     [x] Contactos (CRM)             INCLUIDO
+     [x] Fiscal (Impuestos)          INCLUIDO
+     [x] Despacho                    +$14.99/mes
+     [x] Flota                       +$9.99/mes
+     [ ] Carta Porte                 +$9.99/mes
+     [x] Gastos                      +$4.99/mes
+     [x] Nomina                      +$9.99/mes
+     ----------------------------------
+     Total: $19.99 base + $39.96 modulos = $59.95/mes
+     vs Zoho One: $225/mes (5 empleados)
+     vs Odoo: $360/mes (5 empleados)
+
+  -> Boton: 'Empezar 30 dias gratis con todo'
+
+PANTALLA 4: Datos fiscales (segun pais)
+  -> US: EIN, estado, tipo entidad
+  -> MX: RFC, regimen, CP fiscal
+
+PANTALLA 5: Conectar banco (opcional)
+  -> US: Plaid widget
+  -> MX: Prometeo/Finerio widget
+  -> Skip: 'Lo hago despues'
+
+PANTALLA 6: Listo! Tu dashboard esta listo
+  -> Hub con widgets de los modulos activados
+  -> Tutorial interactivo de 3 pasos
+  -> CTA: 'Crea tu primera factura' o 'Registra tu primer envio'
+
+9. Resumen Ejecutivo
+QUE ESTAMOS CONSTRUYENDO
+Un SISTEMA OPERATIVO DE NEGOCIOS modular, bilingue, con IA, que cualquier PYME de cualquier industria en USA o LATAM puede configurar a su medida. Core universal + 12 modulos horizontales + modulos verticales por industria + marketplace para terceros. Como Dolibarr pero moderno. Como Zoho pero en espanol y 5x mas barato. Como Odoo pero mobile-first y con fiscalidad real de LATAM y USA.
+
+QUE TIENE EL DEVELOPER AHORA (5 Documentos)
+(1) Especificaciones de Producto - analisis competitivo, datos de mercado, funcionalidades detalladas. (2) Estrategia Go-to-Market - canales, pricing, proyecciones por mercado. (3) Guia Tecnica de Implementacion - DB schemas, APIs, integraciones, prompts IA, flujos. (4) Blueprint del Ecosistema - arquitectura de Event Bus, sync entre modulos, estructura del monorepo, roadmap 24 meses. (5) ESTE DOCUMENTO - arquitectura modular por industria, configuraciones, modulos verticales, marketplace, onboarding dinamico.
+
+Con estos 5 documentos, un equipo de fullstack developers puede construir la plataforma completa sin necesitar mas especificaciones. Todo esta definido: que tablas, que eventos, que endpoints, que modulos, que industrias, en que orden, y cuanto cobrar.
+
+
+--- FIN DEL DOCUMENTO ---

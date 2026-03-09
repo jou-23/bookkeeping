@@ -1,656 +1,785 @@
 
 
 
+DOCUMENTO 10
+Cerrando Todos los Huecos
+Schemas Completos | State Machines | 12 Prompts IA | Validaciones
+Edge Cases | Costos | Design System | TypeScript | Escalabilidad | DR
 
-ARQUITECTURA MODULAR
-Sistema Operativo de Negocios por Industria
-Estilo Dolibarr / NextERP / Zoho One
-
-Cada industria arma SU plataforma como LEGO
-Modulos horizontales + Modulos verticales + Marketplace
-
-Marzo 2026 | v1.0
+Marzo 2026 | Documento 10 de 10 — FINAL
 
-1. Filosofia: No es UNA App, es un Sistema Operativo
-EL PROBLEMA CON EL SOFTWARE ACTUAL
-Dolibarr es gratis pero feo, lento, y necesitas un dev para instalarlo. NextERP/Odoo es poderoso pero cuesta $24-72/user/mes y es complejo. Zoho es bonito pero no entiende fiscalidad latina ni habla espanol de verdad. NINGUN ERP modular esta disenado mobile-first, con IA nativa, bilingue real, y con fiscalidad LATAM + USA integrada. Ese es nuestro espacio.
+1. State Machines — Transiciones Validas e Ilegales
+Cada entidad que tiene 'status' necesita una state machine. Sin esto, el developer va a permitir transiciones imposibles.
+1.1 Invoice / Factura
+DRAFT -> SENT          // enviar al cliente
+DRAFT -> CANCELLED     // cancelar antes de enviar
+SENT -> VIEWED         // cliente abrio el link (automatico)
+SENT -> PAID           // pago completo recibido
+SENT -> PARTIAL        // pago parcial
+SENT -> OVERDUE        // paso la fecha de vencimiento (CRON automatico)
+SENT -> CANCELLED      // cancelar factura enviada (requiere motivo)
+VIEWED -> PAID
+VIEWED -> PARTIAL
+VIEWED -> OVERDUE
+VIEWED -> CANCELLED
+OVERDUE -> PAID        // pago tardio
+OVERDUE -> PARTIAL
+OVERDUE -> CANCELLED
+PARTIAL -> PAID        // completar pago
+PARTIAL -> OVERDUE
+PARTIAL -> CANCELLED
 
-1.1 Tres Tipos de Modulos
-Tipo	Que Es	Ejemplos	Quien los Construye
-CORE	Siempre activos. Base de toda la plataforma. No se pueden desactivar.	Auth, Organizations, Users, Notifications, Billing, Audit Log, Dashboard Hub	Nosotros (equipo central)
-HORIZONTALES	Modulos genericos que sirven a CUALQUIER industria. El usuario elige cuales activar.	Libros, Factura, Contactos, Fiscal, Inventario, Nomina, Proyectos, Gastos, POS, Tienda, Soporte, Marketing	Nosotros (equipo central)
-VERTICALES	Modulos especificos para UNA industria. Solo aparecen si la org es de esa industria.	Despacho (cargo), Recetas (restaurante), Habitaciones (hotel), Pacientes (clinica), Obra (construccion), Rutas (delivery)	Nosotros + TERCEROS (marketplace)
+ILEGALES (NUNCA permitir):
+PAID -> cualquier estado (final - inmutable)
+CANCELLED -> cualquier estado (final - inmutable)
+SENT -> DRAFT (no se puede des-enviar)
+OVERDUE -> DRAFT
 
-CLAVE: Los modulos VERTICALES usan la misma infraestructura (Event Bus, schemas, auth, storage) que los horizontales. La unica diferencia es que son especificos de una industria y se activan segun el campo industry de la organizacion.
+CFDI ADICIONAL (Mexico):
+STAMPED -> CANCEL_REQUESTED  // solicitar cancelacion ante SAT
+CANCEL_REQUESTED -> CANCELLED // SAT acepta cancelacion
+CANCEL_REQUESTED -> STAMPED   // SAT rechaza cancelacion (receptor no acepto)
 
-1.2 Como Funciona: El Usuario Arma su Plataforma
-PASO 1: Usuario se registra
-  -> Selecciona pais (US / MX / CO)
-  -> Selecciona industria: Transporte, Restaurante, Construccion, Tienda, Servicios, Otro
+1.2 Shipment / Envio (Cargo)
+CONFIRMED -> DRIVER_ASSIGNED -> DRIVER_EN_ROUTE -> PICKED_UP
+PICKED_UP -> IN_WAREHOUSE_USA -> IN_CONTAINER -> IN_TRANSIT_INTERNATIONAL
+IN_TRANSIT_INTERNATIONAL -> ARRIVED_PORT -> IN_CUSTOMS -> RELEASED
+RELEASED -> IN_WAREHOUSE_DEST -> DRIVER_ASSIGNED_DELIVERY -> OUT_FOR_DELIVERY -> DELIVERED
 
-PASO 2: Sistema sugiere configuracion
-  -> Basado en la industria, pre-selecciona modulos recomendados
-  -> Ejemplo: Restaurante -> LIBROS + FACTURA + CONTACTOS + FISCAL + INVENTARIO + POS + RECETAS
-  -> Ejemplo: Cargo -> LIBROS + FACTURA + CONTACTOS + FISCAL + DESPACHO + FLOTA
-  -> El usuario puede agregar o quitar modulos libremente
+EXCEPCIONES (desde cualquier estado pre-delivery):
+ANY_PRE_DELIVERY -> EXCEPTION  // problema (cliente no esta, danado, direccion incorrecta)
+EXCEPTION -> estado_anterior   // resuelto, volver al flujo normal
+EXCEPTION -> RETURNED          // devolver al remitente
 
-PASO 3: Plataforma se configura dinamicamente
-  -> Sidebar solo muestra modulos activos
-  -> Dashboard solo muestra widgets relevantes
-  -> BD solo crea schemas de modulos activos
-  -> Pricing se calcula basado en modulos seleccionados
+ILEGALES:
+DELIVERED -> cualquiera (final)
+RETURNED -> cualquiera (final)
+IN_TRANSIT -> PICKED_UP (no retroceder)
+IN_WAREHOUSE_DEST -> IN_WAREHOUSE_USA (no retroceder entre paises)
 
-PASO 4: Conforme el negocio crece, agrega modulos
-  -> Click en 'Agregar modulo' -> activa NOMINA
-  -> Automaticamente: sidebar, dashboard, schemas, eventos se expanden
-  -> CERO downtime. CERO migracion. Solo activar.
-
-2. Configuraciones por Industria - Que Necesita Cada Una
-Aqui definimos EXACTAMENTE que modulos usa cada tipo de negocio. SI = modulo horizontal activo. VERTICAL = modulo especifico de la industria (custom).
-2.1 TRANSPORTE / CARGO / LOGISTICA
-Empresa de cargo, mudanzas, paqueteria, fleteo, transporte de mercancias
-Modulo	Activo	Como lo Usa Cargo
-CORE (Hub)	SI	Dashboard con: envios activos, entregas pendientes, facturacion del dia, flota en ruta
-LIBROS	SI	Ingresos por envio, gastos de combustible, mantenimiento, peajes, seguros
-FACTURA	SI	Factura por envio con detalle: origen, destino, peso, volumen. CFDI con carta porte (MX)
-CONTACTOS	SI	Clientes (remitentes), destinatarios, proveedores de combustible, talleres
-FISCAL	SI	Deducciones vehiculares, depreciacion de flota, IVA de servicios de transporte
-INVENTARIO	NO	No aplica directamente (no venden productos)
-NOMINA	SI	Choferes, ayudantes, despachadores. Viaticos, bonos por viaje
-PROYECTOS	NO	No aplica
-GASTOS	SI	Viaticos de chofer, combustible con foto de ticket, peajes, casetas
-POS	NO	No aplica
-DESPACHO	VERTICAL	MODULO VERTICAL: ordenes de envio, tracking, asignacion a unidad, estados (recolectado, en transito, entregado, devuelto)
-FLOTA	VERTICAL	MODULO VERTICAL: unidades, mantenimiento preventivo, rendimiento km/l, documentos (seguro, verificacion, permisos SCT)
-CARTA PORTE	VERTICAL	MODULO VERTICAL: complemento Carta Porte 3.1 para CFDI. Ubicaciones, mercancias, autotransporte federal
-RUTAS	VERTICAL	MODULO VERTICAL: rutas frecuentes, tarifas por ruta, optimizacion, integracion Google Maps
+1.3 Deal / Oportunidad CRM
+LEAD -> CONTACTED -> QUALIFIED -> PROPOSAL -> NEGOTIATION -> WON
+                                                           -> LOST
 
-Eventos especificos de Cargo
-Evento	Emite	Escucha	Accion
-shipment.created	DESPACHO	FACTURA, LIBROS	Crea factura draft con datos del envio. Crea transaction pendiente
-shipment.delivered	DESPACHO	FACTURA, CONTACTOS	Cambia factura a enviable. Actualiza historial del cliente
-shipment.returned	DESPACHO	FACTURA, LIBROS	Genera nota de credito. Reversa transaction
-fleet.maintenance_due	FLOTA	CORE (notif)	Alerta: Unidad X necesita mantenimiento en Y km
-fuel.logged	GASTOS	LIBROS, FLOTA	Transaction de gasto. Actualiza rendimiento km/l de la unidad
-carta_porte.generated	CARTA PORTE	FACTURA	Complementa el CFDI con datos de carta porte
-
-2.2 RESTAURANTE / FOOD SERVICE
-Restaurante, taqueria, cafeteria, food truck, catering, panaderia
-Modulo	Activo	Como lo Usa Restaurante
-CORE (Hub)	SI	Ventas del dia, platos mas vendidos, costo de alimentos, margen del dia
-LIBROS	SI	Ingresos POS, gastos de insumos, renta, servicios, nomina
-FACTURA	SI	Factura global diaria (MX). Factura individual si cliente pide. Propinas
-CONTACTOS	SI	Proveedores de insumos, clientes frecuentes, servicio de catering
-FISCAL	SI	IVA de alimentos (0% vs 16% segun tipo), IEPS en bebidas alcoholicas
-INVENTARIO	SI	Insumos: carne, verduras, bebidas. Control de merma. Ordenes a proveedor
-NOMINA	SI	Meseros, cocineros, ayudantes. Propinas, turnos
-PROYECTOS	NO	No aplica
-GASTOS	SI	Compras de mercado (foto ticket), gas, limpieza
-POS	SI	Caja, mesas, comanda a cocina, split de cuenta, propinas
-RECETAS	VERTICAL	MODULO VERTICAL: receta de cada platillo, costo por porcion, ingredientes necesarios, rendimiento por receta
-MESAS	VERTICAL	MODULO VERTICAL: layout del restaurante, estado de mesas, reservaciones, tiempo de ocupacion
-DELIVERY	VERTICAL	MODULO VERTICAL: pedidos online propios (sin Uber/Rappi), riders, zonas de entrega, tracking
-MENU DIGITAL	VERTICAL	MODULO VERTICAL: menu QR, fotos, precios, disponibilidad en tiempo real segun inventario
+Cualquier etapa -> LOST (puede perderse en cualquier momento)
+LOST -> LEAD (reabrir oportunidad perdida - registrar motivo)
+WON -> genera evento deal.won -> FACTURA crea factura draft
 
-Eventos especificos de Restaurante
-Evento	Emite	Escucha	Accion
-ticket.closed	POS	INVENTARIO, LIBROS, RECETAS	Reduce ingredientes segun recetas vendidas. Registra ingreso
-recipe.costed	RECETAS	POS	Actualiza costo del platillo en POS para calcular margen
-stock.low_ingredient	INVENTARIO	CORE, RECETAS	Alerta: ingrediente X bajo. RECETAS marca platillos afectados
-table.occupied	MESAS	POS	Abre ticket en POS asociado a mesa N
-delivery.completed	DELIVERY	LIBROS, FACTURA	Registra venta con envio. Genera factura si aplica
-menu.item_unavailable	INVENTARIO	MENU DIGITAL	Oculta platillo del menu digital si no hay ingredientes
-
-2.3 CONSTRUCCION / CONTRATISTA
-Contratista general, subcontratista, remodelador, plomero, electricista, pintor
-Modulo	Activo	Como lo Usa Construccion
-CORE (Hub)	SI	Proyectos activos, rentabilidad, pagos pendientes, materiales por pedir
-LIBROS	SI	Ingresos por proyecto/contrato, gastos de material, mano de obra, subcontratos
-FACTURA	SI	Factura por avance de obra, estimaciones, retenciones (5% ISR en MX)
-CONTACTOS	SI	Clientes, subcontratistas, ferreterias, proveedores de material
-FISCAL	SI	Deducciones por vehiculo, herramienta, home office. 1099-NEC a subcontratistas (US)
-INVENTARIO	SI	Materiales: cemento, varilla, tuberia. Stock por bodega/obra
-NOMINA	SI	Albaniles, maestros, ayudantes. Pago por semana. IMSS/workers comp
-PROYECTOS	SI	Cada obra es un proyecto: presupuesto, avance, fases, rentabilidad
-GASTOS	SI	Materiales comprados en obra, renta de equipo, viaticos
-POS	NO	No aplica
-ESTIMACIONES	VERTICAL	MODULO VERTICAL: crear presupuestos/cotizaciones detalladas por concepto de obra (mano de obra + material + overhead). Plantillas por tipo de trabajo
-AVANCE DE OBRA	VERTICAL	MODULO VERTICAL: % de avance por fase, fotos de progreso, bitacora de obra, reportes al cliente
-SUBCONTRATOS	VERTICAL	MODULO VERTICAL: contratos con subs, ordenes de trabajo, control de pago por avance, retenciones
-EQUIPO	VERTICAL	MODULO VERTICAL: maquinaria y herramienta. Ubicacion (en que obra esta), mantenimiento, depreciacion
+ILEGALES:
+WON -> LOST (si ya gano, no puede perder - usar nota de credito)
+LEAD -> WON (no puede saltar etapas - debe pasar por al menos PROPOSAL)
 
-Eventos especificos de Construccion
-Evento	Emite	Escucha	Accion
-estimate.approved	ESTIMACIONES	PROYECTOS, FACTURA	Crea proyecto con budget. Genera factura de anticipo
-phase.completed	AVANCE DE OBRA	FACTURA, PROYECTOS	Genera factura de avance. Actualiza % del proyecto
-subcontract.paid	SUBCONTRATOS	LIBROS, FISCAL	Transaction de gasto. FISCAL verifica si necesita 1099/retencion
-material.purchased	GASTOS	INVENTARIO, LIBROS, PROYECTOS	Agrega stock. Gasto contra el proyecto. Rentabilidad se actualiza
-equipment.moved	EQUIPO	PROYECTOS	Actualiza que equipo esta en que obra
-
-2.4 CLINICA / CONSULTORIO MEDICO
-Consultorio, clinica dental, consultorio psicologico, fisioterapia, veterinaria
-Modulo	Activo	Como lo Usa Clinica
-CORE (Hub)	SI	Citas del dia, pacientes por atender, cobranza pendiente, ingresos del mes
-LIBROS	SI	Ingresos por consulta, gastos de insumos medicos, renta, equipo
-FACTURA	SI	Factura por consulta/procedimiento. CFDI con clave SAT de servicios medicos
-CONTACTOS	SI	Pacientes (con datos extra), proveedores de insumos, laboratorios, seguros
-FISCAL	SI	Servicios medicos exentos de IVA (MX). Deducciones de equipo medico
-INVENTARIO	SI	Insumos medicos, medicamentos, material dental. Control de caducidad
-NOMINA	SI	Enfermeras, recepcionista, asistentes. Honorarios a especialistas
-PROYECTOS	NO	No aplica
-GASTOS	SI	Insumos, laboratorio, equipo, educacion continua
-POS	SI	Cobro en recepcion por consulta/procedimiento
-PACIENTES	VERTICAL	MODULO VERTICAL: expediente clinico (basico, no EHR completo), historial de consultas, alergias, antecedentes. NOTA: NO reemplaza un EHR certificado
-CITAS	VERTICAL	MODULO VERTICAL: agenda, disponibilidad, recordatorios por WhatsApp/SMS, confirmacion. Portal del paciente para agendar online
-RECETAS MED	VERTICAL	MODULO VERTICAL: generar receta medica digital, e-prescripcion, catalogo de medicamentos
+1.4 Ticket Soporte
+OPEN -> ASSIGNED -> IN_PROGRESS -> WAITING_CUSTOMER -> RESOLVED -> CLOSED
+WAITING_CUSTOMER -> IN_PROGRESS (cliente responde)
+RESOLVED -> REOPENED -> IN_PROGRESS (cliente no satisfecho)
+ANY -> CLOSED (cerrar forzado por admin despues de 30 dias inactivo)
 
-Eventos especificos de Clinica
-Evento	Emite	Escucha	Accion
-appointment.confirmed	CITAS	CORE (notif)	Recordatorio al paciente 24h antes por WhatsApp
-appointment.completed	CITAS	POS, FACTURA, PACIENTES	Abre cobro en POS. Prepara factura. Registra consulta en historial
-consultation.charged	POS	LIBROS, FISCAL	Ingreso registrado. Verifica exencion de IVA
-supply.used	PACIENTES	INVENTARIO	Reduce stock de insumo usado en consulta/procedimiento
-supply.expired	INVENTARIO	CORE (notif)	Alerta: medicamento X vence en Y dias
-
-2.5 TIENDA / RETAIL / DISTRIBUIDOR
-Tienda de ropa, abarrotes, ferreteria, distribuidora, mayorista
-Modulo	Activo	Como lo Usa Retail
-CORE (Hub)	SI	Ventas del dia, productos mas vendidos, inventario bajo, margen del dia
-LIBROS	SI	Ventas, compras a proveedores, gastos operativos, costo de venta
-FACTURA	SI	Factura de venta, factura global diaria, notas de credito, devoluciones
-CONTACTOS	SI	Clientes mayoristas, proveedores, marcas representadas
-FISCAL	SI	IVA trasladado/acreditado, DIOT de proveedores, ISR por actividad
-INVENTARIO	SI	Productos, SKUs, codigos de barra, multiples bodegas, traspasos, conteos
-NOMINA	SI	Vendedores, cajeros, bodegueros. Comisiones por venta
-PROYECTOS	NO	No aplica
-GASTOS	SI	Compras, empaques, envios, publicidad
-POS	SI	Caja, lector de codigo de barras, cliente frecuente, descuentos, devoluciones
-TIENDA ONLINE	SI	E-commerce: catalogo, carrito, pago, envio. Sync stock con tienda fisica
-MARKETING	SI	Email/WhatsApp a clientes. Promociones, cupones, programa de lealtad
-LISTAS DE PRECIOS	VERTICAL	MODULO VERTICAL: precios por cliente, por volumen, por temporada. Precio mayoreo vs menudeo
-COMISIONES	VERTICAL	MODULO VERTICAL: comisiones a vendedores por venta. % por producto o categoria. Liquidacion quincenal
-
-2.6 SERVICIOS PROFESIONALES / AGENCIA / FREELANCER
-Agencia de marketing, consultoria, despacho contable, abogado, disenador, dev freelance
-Modulo	Activo	Como lo Usa Servicios
-CORE (Hub)	SI	Proyectos activos, horas del mes, facturacion pendiente, pipeline de ventas
-LIBROS	SI	Ingresos por proyecto/cliente, gastos operativos, suscripciones, tools
-FACTURA	SI	Factura por proyecto, por hora, recurrente mensual, anticipo
-CONTACTOS	SI	Clientes, prospectos (pipeline CRM), contratistas, partners
-FISCAL	SI	Schedule C completo (US). Quarterly estimates. Home office deduction. ISR honorarios (MX)
-INVENTARIO	NO	No aplica (vende servicios, no productos)
-NOMINA	SI	Empleados de la agencia. Freelancers externos (1099/honorarios)
-PROYECTOS	SI	Cada cliente/campana es un proyecto. Tareas, entregables, deadlines, horas, rentabilidad
-GASTOS	SI	Software, viajes, comidas de negocio, equipo
-POS	NO	No aplica
-PROPUESTAS	VERTICAL	MODULO VERTICAL: crear propuestas comerciales con scope, timeline, pricing. Enviar al cliente. Firma electronica. Conversion a proyecto
-TIME TRACKING	VERTICAL	MODULO VERTICAL: timer por tarea, reporte de horas semanal, comparar estimado vs real. Base para facturacion por hora
-CONTRATOS	VERTICAL	MODULO VERTICAL: plantillas de contrato, firma electronica, renovaciones, alertas de vencimiento
-
-2.7 HOTEL / HOSPEDAJE / AIRBNB
-Hotel, motel, hostal, cabanas, Airbnb, renta vacacional
-Modulo	Activo	Como lo Usa Hotel
-CORE (Hub)	SI	Ocupacion hoy, check-ins pendientes, ingresos del dia, habitaciones disponibles
-LIBROS	SI	Ingresos por noche, gastos de limpieza, amenidades, mantenimiento
-FACTURA	SI	Factura al check-out. CFDI de hospedaje con impuesto ISH. Factura corporativa
-CONTACTOS	SI	Huespedes, agencias de viaje, plataformas OTA, proveedores
-FISCAL	SI	ISH (Impuesto Sobre Hospedaje 2-5%). IVA. Lodging tax (US)
-INVENTARIO	SI	Amenidades, blancos, limpieza. Minibar
-NOMINA	SI	Recepcion, limpieza, mantenimiento, seguridad
-PROYECTOS	NO	No aplica
-GASTOS	SI	Mantenimiento, reparaciones, suministros
-POS	SI	Cobro en recepcion, restaurante del hotel, bar
-HABITACIONES	VERTICAL	MODULO VERTICAL: inventario de habitaciones, tipos, tarifas por temporada, estatus (limpia, sucia, en mantenimiento, ocupada)
-RESERVACIONES	VERTICAL	MODULO VERTICAL: calendario, disponibilidad, check-in/out, motor de reservaciones online, channel manager (Booking, Airbnb)
-HOUSEKEEPING	VERTICAL	MODULO VERTICAL: asignacion de limpieza, inspecciones, reportes de dano, inventario de blancos
-
-3. Arquitectura Tecnica de Modulos Verticales
-3.1 Como se Construye un Modulo Vertical
-Cada modulo vertical sigue EXACTAMENTE la misma estructura que un modulo horizontal. La unica diferencia es que se activa condicionalmente.
-// Estructura de un modulo vertical: DESPACHO (cargo)
+SLA: si OPEN sin ASSIGNED por 2 horas -> alerta a supervisor
+SLA: si IN_PROGRESS sin respuesta por 24 horas -> alerta a manager
+SLA: WAITING_CUSTOMER por 7 dias sin respuesta -> auto-RESOLVED
 
-packages/
-  vertical-despacho/
-    |-- schema.prisma        # Tablas: despacho.shipments, despacho.tracking_events
-    |-- events.ts            # Eventos que emite y escucha
-    |-- routes.ts            # API endpoints: /v1/shipments, /v1/tracking
-    |-- service.ts           # Logica de negocio
-    |-- validators.ts        # Zod schemas de validacion
-    |-- types.ts             # TypeScript interfaces
+1.5 Expense Report / Reporte de Gastos
+DRAFT -> SUBMITTED -> APPROVED -> REIMBURSED
+SUBMITTED -> REJECTED (manager rechaza, empleado debe corregir)
+REJECTED -> DRAFT (empleado corrige y re-envia)
+APPROVED -> REIMBURSED (pago procesado)
 
-apps/web/src/modules/
-  despacho/
-    |-- pages/               # UI: lista envios, crear envio, tracking
-    |-- components/          # Cards, forms, maps
-    |-- hooks/               # useShipments, useTracking
-    |-- api/                 # Fetch layer
+ILEGALES: REIMBURSED -> cualquiera (ya se pago, si hay error -> nota credito)
 
-// REGISTRO del modulo en el sistema:
-// archivo: packages/vertical-despacho/manifest.ts
+1.6 Purchase Order / Orden de Compra
+DRAFT -> PENDING_APPROVAL -> APPROVED -> SENT_TO_VENDOR -> PARTIALLY_RECEIVED -> RECEIVED -> BILLED
+PENDING_APPROVAL -> REJECTED -> DRAFT (corregir y re-enviar)
+APPROVED -> CANCELLED (cancelar antes de enviar al proveedor)
+SENT_TO_VENDOR -> CANCELLED (cancelar con penalidad posible)
 
-export const MANIFEST = {
-  id: 'despacho',
-  name: { es: 'Despacho', en: 'Dispatch' },
-  description: { es: 'Gestion de envios y logistica', en: 'Shipping and logistics' },
-  icon: 'truck',
-  industries: ['transporte', 'logistica', 'paqueteria', 'mudanzas'],
-  category: 'vertical',
-  requires: ['contactos', 'libros'],  // Modulos horizontales requeridos
-  optional: ['factura', 'gastos'],      // Modulos que mejoran la experiencia
-  pricing: { usd: 14.99, mxn: 249 },   // Precio adicional por mes
-  schemas: ['despacho'],                // Schemas de BD que necesita
-  events: {
-    emits: ['shipment.created', 'shipment.delivered', 'shipment.returned'],
-    listens: ['invoice.paid', 'contact.updated'],
+1.7 Payroll / Nomina
+DRAFT -> CALCULATING -> REVIEW -> APPROVED -> PAID
+REVIEW -> DRAFT (errores encontrados, recalcular)
+APPROVED -> PAID (dispersar pagos + timbrar CFDIs nomina en MX)
+PAID es FINAL. Si hay error: generar nomina complementaria.
+
+Implementacion Tecnica
+// state-machine.ts - Motor de transiciones para TODA la plataforma
+
+const MACHINES = {
+  invoice: {
+    DRAFT: ['SENT', 'CANCELLED'],
+    SENT: ['VIEWED', 'PAID', 'PARTIAL', 'OVERDUE', 'CANCELLED'],
+    VIEWED: ['PAID', 'PARTIAL', 'OVERDUE', 'CANCELLED'],
+    OVERDUE: ['PAID', 'PARTIAL', 'CANCELLED'],
+    PARTIAL: ['PAID', 'OVERDUE', 'CANCELLED'],
+    PAID: [],      // terminal
+    CANCELLED: [], // terminal
   },
-  routes: '/v1/shipments/*',
-  sidebar: {
-    label: { es: 'Despacho', en: 'Dispatch' },
-    icon: 'truck',
-    children: [
-      { label: { es: 'Envios', en: 'Shipments' }, path: '/shipments' },
-      { label: { es: 'Tracking', en: 'Tracking' }, path: '/tracking' },
-      { label: { es: 'Rutas', en: 'Routes' }, path: '/routes' },
-    ]
-  },
-  widgets: [
-    { id: 'active_shipments', label: { es: 'Envios activos', en: 'Active shipments' } },
-    { id: 'deliveries_today', label: { es: 'Entregas hoy', en: 'Deliveries today' } },
-  ]
+  shipment: { /* ... */ },
+  deal: { /* ... */ },
+  ticket: { /* ... */ },
+  expense: { /* ... */ },
+  purchase_order: { /* ... */ },
+  payroll: { /* ... */ },
 };
 
-CADA modulo (horizontal o vertical) tiene un manifest.ts que define: id, nombre, industrias, dependencias, eventos, rutas, sidebar, widgets, y precio. El sistema lee estos manifests para configurarse dinamicamente.
-
-3.2 Motor de Registro Dinamico
-Asi es como la plataforma sabe que modulos mostrar, que schemas crear, y que eventos escuchar:
-// module-registry.ts - El cerebro de la plataforma
+function canTransition(entity: string, from: string, to: string): boolean {
+  return MACHINES[entity]?.[from]?.includes(to) ?? false;
+}
 
-import { MANIFESTS } from './all-manifests';
-
-class ModuleRegistry {
-  private modules: Map<string, ModuleManifest> = new Map();
-
-  // Al iniciar la app, registrar TODOS los modulos disponibles
-  init() {
-    for (const manifest of MANIFESTS) {
-      this.modules.set(manifest.id, manifest);
-    }
+function transition(entity: string, record: any, newStatus: string, userId: string) {
+  if (!canTransition(entity, record.status, newStatus)) {
+    throw new Error(`Transicion ilegal: ${record.status} -> ${newStatus}`);
   }
-
-  // Obtener modulos activos para una organizacion
-  getActiveModules(org: Organization): ModuleManifest[] {
-    return org.plan_modules
-      .map(id => this.modules.get(id))
-      .filter(Boolean);
-  }
-
-  // Obtener sidebar items para esta org
-  getSidebar(org: Organization): SidebarItem[] {
-    return this.getActiveModules(org)
-      .map(m => m.sidebar)
-      .filter(Boolean);
-  }
-
-  // Obtener widgets del dashboard para esta org
-  getDashboardWidgets(org: Organization): Widget[] {
-    return this.getActiveModules(org)
-      .flatMap(m => m.widgets || []);
-  }
-
-  // Verificar si un modulo esta activo
-  isModuleActive(org: Organization, moduleId: string): boolean {
-    return org.plan_modules.includes(moduleId);
-  }
-
-  // Obtener modulos recomendados para una industria
-  getRecommendedModules(industry: string): ModuleManifest[] {
-    const horizontals = MANIFESTS.filter(m => m.category === 'horizontal');
-    const verticals = MANIFESTS.filter(m => 
-      m.category === 'vertical' && m.industries.includes(industry)
-    );
-    return [...horizontals, ...verticals];
-  }
-
-  // Activar un modulo para una org
-  async activateModule(org: Organization, moduleId: string) {
-    const manifest = this.modules.get(moduleId);
-    if (!manifest) throw new Error('Modulo no existe');
-
-    // Verificar dependencias
-    for (const dep of manifest.requires) {
-      if (!org.plan_modules.includes(dep)) {
-        throw new Error(`Requiere modulo: ${dep}`);
-      }
-    }
-
-    // Crear schemas de BD si no existen
-    await createSchemas(manifest.schemas);
-
-    // Registrar event listeners
-    await registerEvents(manifest.events);
-
-    // Agregar a plan_modules
-    org.plan_modules.push(moduleId);
-    await org.save();
-
-    // Actualizar billing
-    await updateSubscription(org, manifest.pricing);
-  }
+  const oldStatus = record.status;
+  record.status = newStatus;
+  record.updated_at = new Date();
+  // Audit log
+  auditLog({ entity, id: record.id, from: oldStatus, to: newStatus, by: userId });
+  // Emitir evento al Event Bus
+  eventBus.emit(`${entity}.status_changed`, { id: record.id, from: oldStatus, to: newStatus });
 }
 
-3.3 Lazy Loading en Frontend
-Los modulos se cargan en el browser SOLO cuando el usuario navega a ellos. No se descarga codigo de modulos que no tiene activos.
-// router.tsx - Carga dinamica de modulos
+2. Schemas de BD Completos — Las 60+ Tablas que Faltan
+Doc 3 cubrio: organizations, users, accounts, transactions, categories, contacts, invoices, invoice_items, cfdi_invoices, sat_catalogs, tax_estimates_us, form_1099, schedule_c_mapping, bank_connections, bank_transactions_raw (15 tablas). Doc 4 agrego: user_org_roles, notifications, audit_log, integrations, interactions, products, employees, payrolls, projects, terminals, tickets_pos (11 tablas). Aqui van las que FALTAN.
+2.1 CRM
+Tabla	Columnas	FK / Notas
+crm.deals	id UUID PK, org_id FK, contact_id FK, title VARCHAR(255), value DECIMAL(15,2), currency VARCHAR(3), stage_id UUID FK, probability INT (0-100), expected_close_date DATE, assigned_to UUID FK users, source VARCHAR(50), loss_reason TEXT NULL, won_at TIMESTAMP NULL, lost_at TIMESTAMP NULL, notes TEXT, custom_fields JSONB, created_by UUID FK, created_at TIMESTAMP, updated_at TIMESTAMP	stage_id -> crm.stages. contact_id -> contactos.contacts
+crm.stages	id UUID PK, org_id FK, name VARCHAR(100), display_order INT, color VARCHAR(7), probability_default INT, is_won BOOLEAN DEFAULT false, is_lost BOOLEAN DEFAULT false, created_at TIMESTAMP	is_won/is_lost marcan las etapas terminales
+crm.activities	id UUID PK, org_id FK, deal_id UUID FK NULL, contact_id UUID FK NULL, type ENUM(call,email,meeting,task,note,whatsapp), title VARCHAR(255), body TEXT, due_date TIMESTAMP NULL, completed_at TIMESTAMP NULL, duration_minutes INT NULL, outcome VARCHAR(100) NULL, assigned_to UUID FK, created_by UUID FK, created_at TIMESTAMP	Puede ser de un deal O de un contacto (o ambos)
+crm.email_tracking	id UUID PK, org_id FK, contact_id FK, deal_id FK NULL, message_id VARCHAR(255), subject VARCHAR(500), sent_at TIMESTAMP, delivered_at TIMESTAMP NULL, opened_at TIMESTAMP NULL, open_count INT DEFAULT 0, clicked_at TIMESTAMP NULL, click_count INT DEFAULT 0, replied_at TIMESTAMP NULL, bounced BOOLEAN DEFAULT false, bounce_reason VARCHAR(255) NULL	Pixel tracking via SendGrid/Resend
+crm.web_forms	id UUID PK, org_id FK, name VARCHAR(200), fields_config JSONB, submit_action ENUM(create_contact,create_deal,both), default_stage_id UUID FK NULL, assign_to_user UUID FK NULL, assign_method ENUM(specific_user,round_robin,none), redirect_url VARCHAR(500) NULL, notify_users UUID[] NULL, embed_code TEXT, submissions_count INT DEFAULT 0, is_active BOOLEAN, created_at TIMESTAMP	fields_config: [{name,type,required,label_es,label_en}]
 
-import { lazy, Suspense } from 'react';
-import { useOrg } from './hooks/useOrg';
+2.2 Messaging Hub
+Tabla	Columnas	FK / Notas
+messaging.conversations	id UUID PK, org_id FK, contact_id FK, channel ENUM(whatsapp,telegram,sms,email,web_chat,phone), channel_id VARCHAR(255), status ENUM(open,closed,archived), assigned_to UUID FK NULL, last_message_at TIMESTAMP, unread_count INT DEFAULT 0, metadata JSONB, created_at TIMESTAMP	channel_id: whatsapp phone, telegram chat_id, etc
+messaging.messages	id UUID PK, org_id FK, conversation_id UUID FK, direction ENUM(inbound,outbound), sender_type ENUM(contact,user,bot,system), sender_id UUID, content_type ENUM(text,image,audio,video,document,voice_note,location,template), content TEXT, media_url VARCHAR(500) NULL, media_mime VARCHAR(100) NULL, media_duration_sec INT NULL, transcription TEXT NULL, ai_intent VARCHAR(100) NULL, ai_confidence FLOAT NULL, provider_message_id VARCHAR(255) NULL, status ENUM(queued,sent,delivered,read,failed), error_message VARCHAR(500) NULL, created_at TIMESTAMP	transcription: Whisper output para voice notes
+messaging.templates	id UUID PK, org_id FK, channel ENUM(whatsapp,sms,email), name VARCHAR(100), language VARCHAR(5), subject VARCHAR(500) NULL, body TEXT, variables VARCHAR(50)[], provider_template_id VARCHAR(100) NULL, status ENUM(draft,pending_approval,approved,rejected), created_at TIMESTAMP	WhatsApp templates necesitan aprobacion de Meta
+messaging.automations	id UUID PK, org_id FK, name VARCHAR(200), trigger_event VARCHAR(100), trigger_conditions JSONB, delay_minutes INT DEFAULT 0, action_type ENUM(send_message,send_template,assign_agent,create_ticket,tag_contact), action_config JSONB, channel ENUM(whatsapp,sms,email,push) NULL, is_active BOOLEAN, executions_count INT DEFAULT 0, created_at TIMESTAMP	trigger_event: invoice.overdue, appointment.tomorrow, shipment.delivered, etc
+messaging.chatbot_rules	id UUID PK, org_id FK, intent VARCHAR(100), keywords TEXT[], response_type ENUM(text,template,voice_note,handoff_agent,ai_response), response_content TEXT NULL, template_id UUID FK NULL, use_ai BOOLEAN DEFAULT false, priority INT DEFAULT 0, is_active BOOLEAN, created_at TIMESTAMP	intent: greeting, track_order, pricing, support, hours, etc
+
+2.3 Compras
+Tabla	Columnas	FK / Notas
+compras.purchase_orders	id UUID PK, org_id FK, po_number VARCHAR(50) UNIQUE, vendor_id UUID FK contacts, status VARCHAR(30), order_date DATE, expected_delivery DATE NULL, subtotal DECIMAL(15,2), tax_total DECIMAL(15,2), total DECIMAL(15,2), currency VARCHAR(3), notes TEXT NULL, approved_by UUID FK NULL, approved_at TIMESTAMP NULL, warehouse_id UUID FK NULL, created_by UUID FK, created_at TIMESTAMP, updated_at TIMESTAMP	vendor_id -> contactos.contacts WHERE type IN (vendor,both)
+compras.po_items	id UUID PK, po_id UUID FK, product_id UUID FK NULL, description VARCHAR(500), quantity DECIMAL(10,4), unit_price DECIMAL(15,2), tax_rate DECIMAL(5,4), tax_amount DECIMAL(15,2), total DECIMAL(15,2), received_quantity DECIMAL(10,4) DEFAULT 0, sat_product_key VARCHAR(20) NULL	product_id -> inventario.products
+compras.goods_receipts	id UUID PK, org_id FK, po_id UUID FK, receipt_number VARCHAR(50), received_date DATE, warehouse_id UUID FK, received_by UUID FK, notes TEXT NULL, created_at TIMESTAMP	Al recibir: update po_items.received_quantity + stock_movements
+compras.goods_receipt_items	id UUID PK, receipt_id UUID FK, po_item_id UUID FK, product_id UUID FK, quantity_received DECIMAL(10,4), lot_number VARCHAR(50) NULL, expiry_date DATE NULL, serial_numbers TEXT[] NULL, condition ENUM(good,damaged,rejected)	Si product tiene track_lots: lot_number obligatorio
 
-// Lazy import de CADA modulo
-const modulesMap = {
-  libros:      lazy(() => import('./modules/libros')),
-  factura:     lazy(() => import('./modules/factura')),
-  contactos:   lazy(() => import('./modules/contactos')),
-  fiscal:      lazy(() => import('./modules/fiscal')),
-  inventario:  lazy(() => import('./modules/inventario')),
-  nomina:      lazy(() => import('./modules/nomina')),
-  proyectos:   lazy(() => import('./modules/proyectos')),
-  gastos:      lazy(() => import('./modules/gastos')),
-  pos:         lazy(() => import('./modules/pos')),
-  tienda:      lazy(() => import('./modules/tienda')),
-  // VERTICALES
-  despacho:    lazy(() => import('./modules/despacho')),
-  flota:       lazy(() => import('./modules/flota')),
-  recetas:     lazy(() => import('./modules/recetas')),
-  mesas:       lazy(() => import('./modules/mesas')),
-  pacientes:   lazy(() => import('./modules/pacientes')),
-  citas:       lazy(() => import('./modules/citas')),
-  estimaciones: lazy(() => import('./modules/estimaciones')),
-  habitaciones: lazy(() => import('./modules/habitaciones')),
-  // ... mas modulos verticales
-};
+2.4 Help Desk
+Tabla	Columnas	FK / Notas
+soporte.tickets	id UUID PK, org_id FK, ticket_number VARCHAR(30) UNIQUE, contact_id UUID FK NULL, subject VARCHAR(500), description TEXT, status VARCHAR(30), priority ENUM(low,medium,high,urgent), category VARCHAR(100) NULL, assigned_to UUID FK NULL, assigned_at TIMESTAMP NULL, source ENUM(email,whatsapp,portal,phone,web_chat,internal), conversation_id UUID FK NULL messaging.conversations, first_response_at TIMESTAMP NULL, resolved_at TIMESTAMP NULL, closed_at TIMESTAMP NULL, satisfaction_score INT NULL (1-5), sla_breach BOOLEAN DEFAULT false, tags TEXT[], created_by UUID FK, created_at TIMESTAMP, updated_at TIMESTAMP	conversation_id liga con messaging si vino de chat
+soporte.ticket_comments	id UUID PK, ticket_id UUID FK, author_id UUID FK, author_type ENUM(agent,customer,system), body TEXT, attachments JSONB NULL, is_internal BOOLEAN DEFAULT false, created_at TIMESTAMP	is_internal: notas internas que el cliente NO ve
+soporte.sla_configs	id UUID PK, org_id FK, priority VARCHAR(10), first_response_hours INT, resolution_hours INT, business_hours_only BOOLEAN DEFAULT true, created_at TIMESTAMP	Ej: urgent = 1h respuesta, 4h resolucion
+soporte.kb_articles	id UUID PK, org_id FK, title VARCHAR(500), slug VARCHAR(200), body TEXT (markdown), category VARCHAR(100), is_published BOOLEAN DEFAULT false, view_count INT DEFAULT 0, helpful_count INT DEFAULT 0, language VARCHAR(5), created_by UUID FK, created_at TIMESTAMP, updated_at TIMESTAMP	Base de conocimiento publica
+
+2.5 Workflows / Automatizaciones
+Tabla	Columnas	FK / Notas
+core.workflows	id UUID PK, org_id FK, name VARCHAR(200), description TEXT NULL, trigger_event VARCHAR(100), trigger_conditions JSONB, is_active BOOLEAN, execution_count INT DEFAULT 0, last_executed_at TIMESTAMP NULL, created_by UUID FK, created_at TIMESTAMP	trigger_event: invoice.overdue, contact.created, deal.stage_changed, etc
+core.workflow_steps	id UUID PK, workflow_id UUID FK, step_order INT, step_type ENUM(condition,action,delay,branch), config JSONB, created_at TIMESTAMP	condition: {field, operator, value}. action: {type:send_email|send_whatsapp|create_task|update_field|webhook, config:{...}}. delay: {minutes:1440}
+core.workflow_executions	id UUID PK, workflow_id UUID FK, trigger_entity_id UUID, status ENUM(running,completed,failed,cancelled), current_step INT, started_at TIMESTAMP, completed_at TIMESTAMP NULL, error_message TEXT NULL, log JSONB	Log de cada ejecucion para debugging
 
-export function AppRouter() {
-  const { org } = useOrg();
+2.6 Tienda Online
+Tabla	Columnas	FK / Notas
+tienda.store_config	id UUID PK, org_id FK (UNIQUE), store_name VARCHAR(255), store_url VARCHAR(255), logo_url VARCHAR(500), description TEXT, currency VARCHAR(3), shipping_methods JSONB, payment_methods JSONB, is_active BOOLEAN, created_at TIMESTAMP	1 tienda por org. shipping_methods: [{name,price,zones}]
+tienda.online_products	id UUID PK, org_id FK, product_id UUID FK inventario.products, slug VARCHAR(200), is_visible BOOLEAN, display_order INT, online_price DECIMAL(15,2) NULL, images JSONB, short_description VARCHAR(500), full_description TEXT, seo_title VARCHAR(200) NULL, seo_description VARCHAR(300) NULL, created_at TIMESTAMP	online_price NULL = usa sale_price de inventario.products
+tienda.orders	id UUID PK, org_id FK, order_number VARCHAR(50) UNIQUE, contact_id UUID FK NULL, email VARCHAR(255), status ENUM(pending,confirmed,processing,shipped,delivered,cancelled,refunded), shipping_address JSONB, billing_address JSONB, subtotal DECIMAL(15,2), shipping_cost DECIMAL(15,2), tax_total DECIMAL(15,2), discount_total DECIMAL(15,2) DEFAULT 0, total DECIMAL(15,2), payment_method VARCHAR(50), payment_status ENUM(pending,paid,refunded,failed), stripe_payment_id VARCHAR(100) NULL, invoice_id UUID FK NULL, tracking_number VARCHAR(100) NULL, notes TEXT NULL, created_at TIMESTAMP, updated_at TIMESTAMP	Al status=confirmed: emitir event que INVENTARIO reduce stock y LIBROS registra ingreso
+tienda.order_items	id UUID PK, order_id UUID FK, product_id UUID FK, product_name VARCHAR(255), quantity INT, unit_price DECIMAL(15,2), tax_amount DECIMAL(15,2), total DECIMAL(15,2)	Snapshot del producto al momento de compra (precio puede cambiar despues)
+tienda.carts	id UUID PK, org_id FK, session_id VARCHAR(100), contact_id UUID FK NULL, items JSONB, expires_at TIMESTAMP, created_at TIMESTAMP	items: [{product_id,quantity,price}]. TTL 7 dias
+
+2.7 Tablas que Necesitan Columna is_demo
+CADA una de estas tablas DEBE tener: is_demo BOOLEAN DEFAULT false para poder borrar datos de ejemplo.
+-- Tablas que necesitan is_demo:
+contactos.contacts, contactos.interactions,
+libros.accounts, libros.transactions, libros.categories, libros.bank_connections,
+libros.bank_transactions_raw, libros.fixed_assets, libros.depreciation_entries,
+factura.invoices, factura.invoice_items, factura.cfdi_invoices,
+crm.deals, crm.stages, crm.activities,
+inventario.products, inventario.lots, inventario.serial_numbers,
+inventario.stock_movements, inventario.barcodes,
+compras.purchase_orders, compras.po_items,
+nomina.employees, nomina.payrolls, nomina.payroll_items,
+proyectos.projects, proyectos.tasks, proyectos.time_entries,
+gastos.expense_reports, gastos.expense_items,
+pos.terminals, pos.shifts, pos.tickets, pos.ticket_items,
+soporte.tickets, soporte.kb_articles,
+-- TOTAL: 35+ tablas con is_demo
+
+3. Validaciones de Datos — Regex y Reglas Exactas
+Sin estas validaciones, la BD se llena de basura. Implementar en Zod (compartido front+back).
+Campo	Regex / Regla	Ejemplo Valido	Notas
+RFC Mexico (persona fisica)	^[A-Z]{4}\d{6}[A-Z0-9]{3}$	GORM850101AB1	4 letras + 6 digitos fecha + 3 homoclave
+RFC Mexico (persona moral)	^[A-Z]{3}\d{6}[A-Z0-9]{3}$	TAC060101XX2	3 letras + 6 digitos + 3 homoclave
+RFC Generico publico	XAXX010101000	XAXX010101000	Ventas al publico general
+RFC Extranjero	XEXX010101000	XEXX010101000	Cliente extranjero sin RFC
+CURP	^[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d$	GORM850101HDFRRL09	18 caracteres exactos
+NSS (IMSS)	^\d{11}$	12345678901	11 digitos
+CLABE Bancaria MX	^\d{18}$	012345678901234567	18 digitos con digito verificador
+EIN (USA)	^\d{2}-\d{7}$	12-3456789	XX-XXXXXXX
+SSN (USA)	^\d{3}-\d{2}-\d{4}$	123-45-6789	XXX-XX-XXXX. NUNCA mostrar completo en UI
+Telefono MX	+52 seguido de 10 digitos	+525512345678	Celular: 10 digitos despues de +52
+Telefono USA	+1 seguido de 10 digitos	+17865551234	Area code + 7 digitos
+Email	RFC 5322 simplificado	user@domain.com	Usar validator.js o zod .email()
+Codigo Postal MX	^\d{5}$	06600	5 digitos. Validar contra catalogo SAT CP
+ZIP Code USA	^\d{5}(-\d{4})?$	33101 o 33101-4321	5 digitos o ZIP+4
+Monto monetario	DECIMAL(15,2) >= 0	1234.56	Nunca negativo para facturas. Transacciones si pueden ser negativas
+Tasa de impuesto	DECIMAL(5,4) entre 0 y 1	0.1600	0.16 = 16%. No 16.00
+UUID	v4 format	550e8400-e29b-41d4-a716-446655440000	Usar gen_random_uuid() de PostgreSQL
 
-  // Solo generar rutas para modulos activos
-  const activeRoutes = org.plan_modules
-    .filter(id => modulesMap[id])
-    .map(id => ({
-      path: `/${id}/*`,
-      Component: modulesMap[id],
-    }));
+// packages/shared/validators/fiscal.ts
 
-  return (
-    <Suspense fallback={<Loading />}>
-      <Routes>
-        <Route path='/' element={<HubDashboard />} />
-        {activeRoutes.map(r => (
-          <Route key={r.path} path={r.path} element={<r.Component />} />
-        ))}
-        <Route path='*' element={<ModuleNotActive />} />
-      </Routes>
-    </Suspense>
-  );
+import { z } from 'zod';
+
+export const rfcPersonaFisica = z.string()
+  .regex(/^[A-Z]{4}\d{6}[A-Z0-9]{3}$/, 'RFC invalido (persona fisica)')
+  .transform(v => v.toUpperCase());
+
+export const rfcPersonaMoral = z.string()
+  .regex(/^[A-Z]{3}\d{6}[A-Z0-9]{3}$/, 'RFC invalido (persona moral)')
+  .transform(v => v.toUpperCase());
+
+export const rfc = z.union([rfcPersonaFisica, rfcPersonaMoral,
+  z.literal('XAXX010101000'),  // publico general
+  z.literal('XEXX010101000'),  // extranjero
+]);
+
+export const ein = z.string().regex(/^\d{2}-\d{7}$/, 'EIN invalido');
+export const ssn = z.string().regex(/^\d{3}-\d{2}-\d{4}$/, 'SSN invalido');
+export const curp = z.string().regex(/^[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d$/, 'CURP invalido');
+export const clabe = z.string().regex(/^\d{18}$/, 'CLABE invalida');
+export const nss = z.string().regex(/^\d{11}$/, 'NSS invalido');
+export const zipMX = z.string().regex(/^\d{5}$/, 'CP invalido');
+export const zipUS = z.string().regex(/^\d{5}(-\d{4})?$/, 'ZIP invalido');
+export const phoneMX = z.string().regex(/^\+52\d{10}$/, 'Telefono MX invalido');
+export const phoneUS = z.string().regex(/^\+1\d{10}$/, 'Telefono US invalido');
+export const money = z.number().nonnegative().multipleOf(0.01);
+export const taxRate = z.number().min(0).max(1);
+
+4. Edge Cases — Que Pasa Cuando las Cosas Salen Mal
+Escenario	Que Puede Pasar	Como Manejar
+PAC caido a mitad de timbrado	Usuario ve 'procesando' pero CFDI no se timbro. Factura quedo en limbo.	1) Retry 3x con Facturama. 2) Switch a Conectia (PAC backup). 3) Si ambos fallan: marcar factura como 'stamp_pending', notificar usuario, CRON retry cada 15min por 24h. 4) NUNCA mostrar UUID falso.
+Plaid retorna transacciones duplicadas	Misma transaccion aparece 2 veces en bank_transactions_raw	Dedup key: provider_transaction_id. UNIQUE constraint en BD. ON CONFLICT DO NOTHING. Si de algun modo pasa: reconciliacion las detecta como 'sin match' y el usuario puede borrar manual.
+Dos personas editan misma factura	Person A y B abren factura 042 al mismo tiempo. A guarda. B guarda despues y sobreescribe.	Optimistic locking: campo version INT en invoices. UPDATE WHERE id=X AND version=Y. Si version no matchea -> error 409 Conflict -> UI muestra 'Esta factura fue modificada por otro usuario. Recargar?'
+Chofer sin senal GPS 2 horas	Eventos de scan se acumulan en offline queue. Admin no ve al chofer en mapa.	Offline queue (Doc 9). Ultimo known location se muestra con badge 'ultima posicion hace 2h'. Al reconectar: sync batch con timestamps originales. Geofence events se recalculan retroactivamente.
+Pago Stripe exitoso pero webhook falla	Cliente pago pero factura sigue como 'sent'. Cliente reclama.	1) Stripe webhook retry (hasta 3 dias). 2) CRON cada hora: para facturas con stripe_payment_link, verificar status en Stripe API directamente. 3) Si pagado en Stripe pero no en sistema -> marcar como paid + alerta a admin.
+Usuario borra contacto con facturas	Contacto tiene 50 facturas historicas. Si se borra, las facturas quedan huerfanas.	NUNCA borrar contacto con facturas/transacciones. Soft delete: status='archived'. UI: 'Este contacto tiene 50 facturas. No se puede eliminar. Se puede archivar.'
+Import CSV con 10,000 filas mal formateadas	Server se queda procesando por 10 min. Usuario piensa que se trabo.	1) Procesar en background job, no en request. 2) Progress bar via WebSocket. 3) Validar ANTES de importar (paso preview). 4) Timeout: si import tarda >5min, partir en batches de 1000. 5) Max 50,000 filas por import.
+SAT cambia catalogo sin aviso	Nuestro cache tiene clave de producto obsoleta. Factura sale con error.	CRON semanal verifica SHA256 hash del catalogo. Si cambio -> descargar nuevo -> diff -> notificar admin de orgs afectadas. Facturas en draft con claves obsoletas: badge de advertencia.
+Multi-moneda: tasa de cambio no disponible	API de tasas esta caida. Factura en USD para org con base MXN.	Cache de ultima tasa conocida (hasta 48h). Si cache >48h: bloquear creacion de factura en moneda foranea con mensaje: 'Tasa de cambio no disponible. Ingresar manualmente?'
+Trial expira con datos importantes	Usuario no pago pero tiene 3 meses de datos. No puede acceder.	1) 7 dias antes: email + WhatsApp 'tu trial vence en 7 dias'. 2) Al vencer: acceso READ ONLY por 30 dias. 3) Despues de 30 dias: acceso bloqueado pero datos NO se borran. 4) Puede reactivar en cualquier momento con pago. 5) Despues de 1 ano: email final, 30 dias para exportar, luego se borran datos.
+
+5. Los 12 Prompts de IA — System Messages Exactos
+Doc 3 tenia 2 prompts (categorizacion + asistente NLP). Aqui van los 10 que faltan.
+5.1 OCR de Recibos (Vision)
+MODEL: gpt-4o (vision)
+TEMPERATURE: 0.1
+MAX_TOKENS: 500
+
+SYSTEM: Eres un extractor de datos de recibos y tickets de compra.
+Analiza la imagen y extrae los datos en JSON.
+Si un campo no es legible, pon null.
+Responde SOLO con JSON, sin markdown ni explicaciones.
+
+RESPONSE SCHEMA:
+{
+  "vendor_name": string | null,
+  "vendor_rfc": string | null,     // si es ticket mexicano
+  "date": "YYYY-MM-DD" | null,
+  "subtotal": number | null,
+  "tax_amount": number | null,
+  "tax_rate": number | null,        // 0.16 para IVA 16%
+  "total": number,                  // obligatorio
+  "payment_method": "cash" | "card" | "transfer" | null,
+  "items": [{ "description": string, "quantity": number, "price": number }],
+  "currency": "MXN" | "USD" | null,
+  "confidence": number              // 0.0 a 1.0
+}
+
+5.2 Auto-Match Reconciliacion Bancaria
+MODEL: gpt-4o-mini
+TEMPERATURE: 0.1
+MAX_TOKENS: 300
+
+SYSTEM: Eres un asistente de reconciliacion bancaria.
+Te doy una transaccion del banco y una lista de facturas/pagos pendientes.
+Tu trabajo es encontrar el MEJOR match.
+Considera: monto (exacto o cercano), fecha (+/- 5 dias), nombre/descripcion.
+Si no hay match confiable, di 'no_match'.
+Responde SOLO con JSON.
+
+USER MESSAGE:
+Transaccion banco: { description: '{desc}', amount: {amount}, date: '{date}' }
+Candidatos: [{id, type, contact_name, amount, date, description}]
+
+RESPONSE SCHEMA:
+{
+  "match_id": string | "no_match",
+  "confidence": number,  // 0.0 a 1.0
+  "reasoning": string    // en espanol, 1 linea
+}
+
+5.3 Sugerencia de Clave SAT
+MODEL: gpt-4o-mini
+TEMPERATURE: 0.2
+MAX_TOKENS: 200
+
+SYSTEM: Eres un experto en catalogos del SAT mexicano.
+Te dan la descripcion de un producto o servicio.
+Sugiere la clave de producto/servicio del catalogo del SAT mas apropiada.
+El catalogo tiene 50,000+ claves. Elige la MAS ESPECIFICA que aplique.
+Tambien sugiere la clave de unidad.
+Responde SOLO con JSON.
+
+USER: '{descripcion_del_concepto}'
+Contexto: negocio tipo '{industry}', regimen '{fiscal_regime}'
+
+RESPONSE:
+{
+  "product_key": "XXXXXXXX",     // 8 digitos
+  "product_description": "...",   // nombre oficial SAT
+  "unit_key": "XXX",             // E48=servicio, H87=pieza, KGM=kg
+  "unit_description": "...",
+  "confidence": number,
+  "alternatives": [{ "product_key", "description", "confidence" }]  // top 3
+}
+
+5.4 Deteccion de Anomalias
+MODEL: gpt-4o-mini
+TEMPERATURE: 0.3
+MAX_TOKENS: 500
+
+SYSTEM: Eres un auditor financiero. Analiza las transacciones del mes
+y detecta anomalias: montos inusuales, duplicados sospechosos,
+gastos fuera de patron, transacciones en horarios extranos,
+pagos a nuevos vendors sin aprobacion, etc.
+Responde SOLO con JSON.
+
+USER: Transacciones del mes: [{date, description, amount, category, vendor}]
+Historial promedio mensual: { avg_income, avg_expense, top_categories }
+
+RESPONSE:
+{
+  "anomalies": [
+    { "transaction_id": "...", "type": "unusual_amount|duplicate|new_vendor|timing|pattern_break",
+      "severity": "low|medium|high", "explanation": "..." }
+  ],
+  "summary": "Resumen en 2 oraciones en espanol"
+}
+
+5.5 Resumen Ejecutivo de Periodo
+MODEL: gpt-4o
+TEMPERATURE: 0.5
+MAX_TOKENS: 800
+
+SYSTEM: Eres el CFO virtual de {org.name}. Genera un resumen ejecutivo
+del periodo {period} en espanol. Tono profesional pero accesible.
+Incluye: ingresos vs periodo anterior, gastos principales, margen,
+clientes mas importantes, alertas, y 2-3 recomendaciones accionables.
+Usa numeros reales. No inventes datos.
+
+USER: Datos del periodo: { income, expenses, net, top_clients[],
+  top_expense_categories[], pending_receivables, overdue_invoices,
+  cash_balance, previous_period_income, previous_period_expenses }
+
+RESPONSE: { 'summary': 'parrafo de resumen', 'highlights': ['punto1','punto2','punto3'],
+  'alerts': ['alerta1','alerta2'], 'recommendations': ['rec1','rec2'] }
+
+5.6 Intent Classifier (Mensajes Entrantes)
+MODEL: gpt-4o-mini
+TEMPERATURE: 0.1
+MAX_TOKENS: 100
+
+SYSTEM: Clasifica el intent del mensaje del cliente.
+Intents posibles: TRACK_ORDER, NEW_ORDER, PRICING, SUPPORT,
+SCHEDULE_APPOINTMENT, PAYMENT_INQUIRY, COMPLAINT, GREETING, OTHER.
+Si es voz transcrita, puede tener errores de transcripcion — infiere intent.
+
+USER: '{message_text}'
+Canal: {channel}. Idioma detectado: {language}.
+
+RESPONSE: { 'intent': 'TRACK_ORDER', 'confidence': 0.92,
+  'entities': { 'order_code': 'DR-4821-MR' },
+  'suggested_response': 'respuesta sugerida en idioma del cliente' }
+
+5.7-5.12 Prompts Restantes (Resumidos)
+#	Funcion	Model	Input Clave	Output Clave
+5.7	Prediccion Cash Flow	gpt-4o-mini	Historico 90d + facturas pendientes + recurrentes	projections[{day,balance,alert}] + narrative
+5.8	Auto-mapeo columnas import	gpt-4o-mini	Headers CSV + 3 filas de ejemplo + campos del sistema	mapping[{source_col,target_field,confidence}]
+5.9	Voice Order Extraction	gpt-4o	Transcripcion de voice note + contexto del negocio	{name,phone,address,destination,items[],confidence_per_field}
+5.10	Generacion respuesta auto	gpt-4o-mini	Mensaje del cliente + historial + datos de su cuenta	{response_text, tone, needs_human: boolean}
+5.11	Smart categorization rules	gpt-4o-mini	Historial de categorizacion manual del usuario (100+ entries)	rules[{pattern,category,confidence}] para cache local
+5.12	Fiscal Q&A	gpt-4o	Pregunta fiscal del usuario + pais + regimen + contexto	{answer, disclaimer, sources[]} — siempre dice 'consulta a tu contador'
+
+6. Costos Operativos por Cliente — Margen Real
+Si no sabemos cuanto nos cuesta servir a un cliente, podemos estar vendiendo a perdida.
+6.1 Costo por Servicio Externo
+Servicio	Costo Unitario	Uso Estimado por Cliente/Mes	Costo Mensual por Cliente
+OpenAI GPT-4o-mini	$0.15/1M input + $0.60/1M output	~50K tokens (categorizacion + sugerencias)	$0.04
+OpenAI GPT-4o	$2.50/1M input + $10/1M output	~10K tokens (asistente NLP, OCR)	$0.13
+OpenAI Whisper	$0.006/minuto	~10 min audio/mes	$0.06
+Plaid (bank sync)	$0.30/cuenta/mes	1-2 cuentas conectadas	$0.45
+Prometeo (MX)	~$0.10/consulta (negociable)	~60 consultas/mes (sync 4x/dia x 2 cuentas x 30d / 4)	$0.60
+Facturama (CFDI)	$0.40 MXN/timbre (~$0.02 USD)	~30 timbres/mes	$0.60
+Stripe (billing)	2.9% + $0.30 por cobro de suscripcion	1 cobro/mes	$0.88 (sobre plan $30)
+Twilio SMS	$0.0079/SMS	~20 SMS/mes	$0.16
+Twilio WhatsApp	$0.005-0.08/msg (depende template vs session)	~50 msgs/mes	$0.50
+SendGrid/Resend email	$0.001/email (gratis primeros 3K)	~100 emails/mes	$0.10
+ElevenLabs TTS	$0.30/1K chars	~2K chars/mes (voice notes)	$0.60
+AWS (infra prorrateado)	EC2+RDS+S3+Redis	1/1000 de infra ($2K/mes infra / 1000 clientes)	$2.00
+		TOTAL POR CLIENTE/MES:	$6.12 USD
+
+6.2 Margen por Plan
+Plan	Precio	Costo Estimado	Margen Bruto	Margen %
+Free	$0	$2.00 (infra minima, sin AI ni Plaid)	($2.00)	Perdida (acquisition cost)
+Starter $19.99	$19.99	$6.12	$13.87	69%
+Pro $39.99	$39.99	$8.50 (mas AI, mas mensajes)	$31.49	79%
+Business $69.99	$69.99	$12.00 (full AI, mas usuarios, mas storage)	$57.99	83%
+Enterprise $149.99	$149.99	$20.00 (premium support, mas API calls)	$129.99	87%
+
+RESULTADO: Margen bruto de 69-87% en planes pagos. Esto es SALUDABLE para SaaS (benchmark 70-85%). Los free users cuestan ~$2/mes — recuperamos con conversion a paid (target 5-10% conversion rate).
+
+ALERTAS DE COSTO: Si un cliente usa MUCHA IA (>200K tokens/mes) o muchos SMS (>500/mes), el costo sube. Implementar rate limits por plan: Starter=100 AI calls/mes, Pro=500, Business=2000, Enterprise=unlimited.
+
+7. Design System — Especificaciones Visuales
+7.1 Colores
+Nombre	Hex	Uso
+Primary	#1A56DB	Botones primarios, links, sidebar activo, badges activos
+Primary Dark	#1E3A8A	Sidebar background, headers de tabla
+Primary Light	#DBEAFE	Badges info, backgrounds de alertas info, hover states
+Success	#059669	Estados positivos: pagado, entregado, aprobado, reconciliado
+Warning	#D97706	Alertas moderadas: por vencer, pendiente revision, baja confianza IA
+Danger	#DC2626	Errores, vencido, rechazado, excepcion, eliminar
+Gray 50	#F9FAFB	Background principal de la app
+Gray 100	#F3F4F6	Background de cards, filas alternas de tabla
+Gray 200	#E5E7EB	Bordes, separadores
+Gray 500	#6B7280	Texto secundario, placeholders, iconos inactivos
+Gray 900	#111827	Texto principal, titulos
+White	#FFFFFF	Background de cards, modals, inputs
+
+7.2 Tipografia
+Elemento	Font	Size	Weight	Line Height
+H1 (page title)	Inter	24px / 1.5rem	700 Bold	32px
+H2 (section)	Inter	20px / 1.25rem	600 Semibold	28px
+H3 (subsection)	Inter	16px / 1rem	600 Semibold	24px
+Body	Inter	14px / 0.875rem	400 Regular	20px
+Body Small	Inter	12px / 0.75rem	400 Regular	16px
+Label	Inter	12px / 0.75rem	500 Medium	16px
+Button	Inter	14px / 0.875rem	500 Medium	20px
+Code / Mono	JetBrains Mono	13px / 0.8125rem	400 Regular	20px
+Numbers / Money	Inter Tabular	14px / 0.875rem	500 Medium	20px
+
+7.3 Componentes Base (Tailwind Classes)
+// Boton Primario:
+className='bg-blue-700 hover:bg-blue-800 text-white font-medium py-2 px-4 rounded-lg
+  transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed'
+
+// Boton Secundario:
+className='bg-white border border-gray-300 hover:bg-gray-50 text-gray-700
+  font-medium py-2 px-4 rounded-lg transition-colors'
+
+// Boton Destructivo:
+className='bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg'
+
+// Input:
+className='w-full border border-gray-300 rounded-lg py-2 px-3 text-sm
+  focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-gray-400'
+
+// Card:
+className='bg-white rounded-xl border border-gray-200 p-6 shadow-sm'
+
+// Table header:
+className='bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3'
+
+// Table row:
+className='border-b border-gray-100 hover:bg-gray-50 transition-colors'
+
+// Badge (status):
+// paid:    className='inline-flex px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-800'
+// pending: className='inline-flex px-2 py-0.5 text-xs font-medium rounded-full bg-yellow-100 text-yellow-800'
+// overdue: className='inline-flex px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-800'
+
+// Sidebar:
+className='w-64 bg-gray-900 text-white h-screen fixed left-0 top-0'
+// Sidebar item active: className='bg-blue-700/20 text-white border-l-3 border-blue-400'
+// Sidebar item inactive: className='text-gray-400 hover:text-white hover:bg-gray-800'
+
+// Modal overlay:
+className='fixed inset-0 bg-black/50 flex items-center justify-center z-50'
+// Modal content:
+className='bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto'
+
+7.4 Spacing + Layout
+Grid: 4px base unit. Todo spacing en multiplos de 4: 4, 8, 12, 16, 20, 24, 32, 40, 48, 64
+Page padding: 24px (px-6)
+Card padding: 24px (p-6)
+Stack spacing (entre elementos): 16px (space-y-4)
+Sidebar width: 256px (w-64). Collapsible a 64px (w-16) con solo iconos
+Topbar height: 64px (h-16)
+Content max width: 1280px (max-w-7xl) centrado
+Border radius: inputs 8px (rounded-lg), cards 12px (rounded-xl), badges 9999px (rounded-full)
+Shadows: cards shadow-sm, modals shadow-xl, dropdowns shadow-lg
+
+8. TypeScript Interfaces Compartidas (Front + Back)
+// packages/shared/types/index.ts
+
+// ── CORE ──
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  country: 'US' | 'MX' | 'CO' | 'PE' | 'CL';
+  currency: 'USD' | 'MXN' | 'COP' | 'PEN' | 'CLP';
+  language: 'es' | 'en';
+  timezone: string;
+  fiscal_id: string;
+  fiscal_regime: string;
+  fiscal_name: string;
+  plan: 'free' | 'starter' | 'pro' | 'business' | 'enterprise';
+  plan_modules: string[];
+  industry: string;
+  settings: Record<string, any>;
+  has_demo_data: boolean;
+  created_at: string;
+}
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  avatar_url: string | null;
+  language: 'es' | 'en';
+}
+
+export interface UserOrgRole {
+  org_id: string;
+  role: 'owner' | 'admin' | 'manager' | 'member' | 'viewer' | 'accountant';
+  level: 'executive' | 'manager' | 'supervisor' | 'staff' | 'viewer';
+  department_id: string | null;
+  module_permissions: Record<string, PermissionLevel>;
+  data_scope: 'all' | 'department' | 'team' | 'own';
+  special_permissions: string[];
+}
+
+export type PermissionLevel = 'none' | 'view' | 'own' | 'create' | 'edit' | 'full' | 'approve';
+
+// ── FINANZAS ──
+export interface Transaction {
+  id: string;
+  org_id: string;
+  date: string;
+  description: string;
+  amount: number;
+  type: 'income' | 'expense' | 'transfer';
+  status: 'pending' | 'cleared' | 'reconciled' | 'voided';
+  category_id: string | null;
+  contact_id: string | null;
+  invoice_id: string | null;
+  project_id: string | null;
+  bank_transaction_id: string | null;
+  is_tax_deductible: boolean;
+  tax_amount: number;
+  tax_rate: number | null;
+  receipt_url: string | null;
+  ai_categorized: boolean;
+  ai_category_confidence: number | null;
+  is_demo: boolean;
+}
+
+export type InvoiceStatus = 'draft'|'sent'|'viewed'|'paid'|'partial'|'overdue'|'cancelled';
+
+export interface Invoice {
+  id: string;
+  org_id: string;
+  contact_id: string;
+  invoice_number: string;
+  status: InvoiceStatus;
+  issue_date: string;
+  due_date: string;
+  subtotal: number;
+  tax_total: number;
+  total: number;
+  amount_paid: number;
+  currency: string;
+  language: 'es' | 'en';
+  items: InvoiceItem[];
+  pdf_url: string | null;
+  payment_link: string | null;
+  is_recurring: boolean;
+  is_demo: boolean;
+}
+
+export interface InvoiceItem {
+  id: string;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  tax_rate: number;
+  tax_amount: number;
+  total: number;
+  sat_product_key: string | null;
+  sat_unit_key: string | null;
+}
+
+// ── CONTACTOS ──
+export interface Contact {
+  id: string;
+  org_id: string;
+  type: 'customer' | 'vendor' | 'employee' | 'lead' | 'both';
+  status: 'active' | 'inactive' | 'archived';
+  name: string;
+  display_name: string;
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  fiscal_id: string | null;
+  fiscal_name: string | null;
+  tags: string[];
+  total_revenue: number;
+  outstanding_balance: number;
+  is_demo: boolean;
+}
+
+// ── CRM ──
+export type DealStage = string; // dynamic per org
+export interface Deal {
+  id: string;
+  org_id: string;
+  contact_id: string;
+  title: string;
+  value: number;
+  currency: string;
+  stage_id: string;
+  probability: number;
+  expected_close_date: string | null;
+  assigned_to: string;
+  source: string | null;
+  loss_reason: string | null;
+}
+
+// ── INVENTARIO ──
+export interface Product {
+  id: string;
+  org_id: string;
+  sku: string;
+  name: string;
+  type: 'product' | 'service' | 'bundle';
+  cost_price: number;
+  sale_price: number;
+  tax_rate: number;
+  current_stock: number;
+  reorder_point: number | null;
+  track_inventory: boolean;
+  track_lots: boolean;
+  track_serials: boolean;
+  barcode: string | null;
+  image_url: string | null;
+  sat_product_key: string | null;
+  is_demo: boolean;
+}
+
+// ── MESSAGING ──
+export type Channel = 'whatsapp' | 'telegram' | 'sms' | 'email' | 'web_chat' | 'phone';
+export interface Message {
+  id: string;
+  conversation_id: string;
+  direction: 'inbound' | 'outbound';
+  sender_type: 'contact' | 'user' | 'bot' | 'system';
+  content_type: 'text'|'image'|'audio'|'video'|'document'|'voice_note'|'location'|'template';
+  content: string;
+  media_url: string | null;
+  transcription: string | null;
+  status: 'queued' | 'sent' | 'delivered' | 'read' | 'failed';
+  created_at: string;
+}
+
+// ── SHIPMENT (Cargo vertical) ──
+export interface Shipment {
+  id: string;
+  org_id: string;
+  shipment_number: string;
+  status: string; // 15+ estados definidos en state machine
+  sender_contact_id: string;
+  receiver_name: string;
+  origin_address: Address;
+  destination_address: Address;
+  pieces: number;
+  weight_kg: number | null;
+  price: number;
+  vehicle_id: string | null;
+  driver_contact_id: string | null;
+  estimated_delivery: string | null;
+}
+
+export interface Address {
+  street: string;
+  city: string;
+  state: string;
+  zip: string;
+  country: string;
+  lat?: number;
+  lng?: number;
 }
 
-4. Marketplace de Modulos - Terceros Pueden Construir
-VISION A FUTURO (Ano 2+)
-Una vez que el core y los modulos horizontales estan estables, abrimos un MARKETPLACE donde desarrolladores externos pueden construir y vender modulos verticales. Exactamente como la Odoo App Store o el Zoho Marketplace. Un dev mexicano puede crear un modulo de 'Taller Mecanico' y venderlo a $99 MXN/mes. Nosotros tomamos 20% de comision. El dev gana 80%. Todos ganan.
+9. Plan de Escalabilidad
+Fase	Orgs	Users Concurrentes	Que Cambiar
+Launch	0-100	<50	Nada. ECS 2 tasks + RDS small + Redis small. Todo funciona.
+Growth	100-1,000	50-500	ECS auto-scale a 4-8 tasks. RDS medium. Redis medium. Agregar read replica para reportes. PgBouncer.
+Scale	1K-10K	500-5K	RDS large Multi-AZ. Redis cluster. Separar workers en tasks dedicadas. CDN para assets. Rate limiting agresivo. Considerar sharding por region (US vs LATAM).
+Enterprise	10K-100K	5K-50K	Database sharding por org_id ranges. Microservicios: separar API monolito en servicios por dominio (billing, messaging, fiscal). Kafka en vez de Redis pub/sub. Multi-region active-active.
+Platform	100K+	50K+	Kubernetes multi-cluster. CockroachDB o Citus para distributed PostgreSQL. CDN edge computing. Dedicated infra para enterprise clients. SOC 2 Type II compliance.
 
-4.1 Que Necesita un Developer Externo para Crear un Modulo
-Lo que Proveemos	Descripcion
-Module SDK (npm package)	Libreria que abstrae auth, event bus, DB access, storage, notifications
-CLI Tool	npx tucontabilidad create-module 'nombre' -> genera estructura completa
-Sandbox Environment	Ambiente de pruebas con org fake y datos de ejemplo
-Documentation Portal	Guia completa con ejemplos, API reference, best practices
-Testing Framework	Suite de tests que el modulo debe pasar para publicarse
-Review Process	Revision de codigo, seguridad, y UX antes de aprobar publicacion
-Revenue Dashboard	El dev ve cuantas orgs usan su modulo y cuanto ha ganado
-
-4.2 Reglas del Marketplace
-Cada modulo DEBE tener un manifest.ts valido con todas las propiedades requeridas
-DEBE usar el Event Bus para comunicarse con otros modulos. NO puede hacer queries directos a schemas de otros modulos
-DEBE pasar security review: no puede acceder datos de otras organizaciones, no puede enviar datos a servidores externos sin consentimiento
-DEBE ser responsive (mobile-friendly) y seguir el design system de la plataforma
-DEBE soportar espanol e ingles minimo
-PUEDE usar tablas propias en un schema con prefijo del modulo (ej: ext_taller.*)
-PUEDE emitir eventos custom con prefijo (ej: ext_taller.vehicle_received)
-NO puede modificar tablas core ni de otros modulos
-NO puede bypassear el API Gateway ni el auth middleware
-Revenue split: 80% developer, 20% plataforma
+Bottlenecks Esperados (en orden de aparicion)
+Primero: PostgreSQL connections. Solucion: PgBouncer. Costo: $0
+Segundo: Bank sync CRON para 1000+ orgs. Solucion: paralelizar con workers, rate limit por proveedor
+Tercero: AI calls latencia. Solucion: cache agresivo de categorizaciones repetidas en Redis, batch processing
+Cuarto: WebSocket connections. Solucion: sticky sessions en ALB, horizontal scale de WS servers
+Quinto: Storage S3 para CFDIs (5 anos retencion x 1000+ orgs). Solucion: lifecycle policies, Glacier para >2 anos
 
-4.3 Ejemplos de Modulos Verticales que Terceros Podrian Construir
-Modulo	Industria	Que Hace	Precio Sugerido
-Taller Mecanico	Automotriz	Ordenes de servicio, diagnosticos, piezas, historial vehicular, fotos antes/despues	$149 MXN/mes
-Gym/Estudio	Fitness	Membresias, control de acceso, clases, pagos recurrentes, instructor schedule	$199 MXN/mes
-Inmobiliaria	Real Estate	Propiedades, visitas, contratos de renta/venta, comisiones, portal de propiedades	$249 MXN/mes
-Escuela/Academia	Educacion	Alumnos, inscripciones, pagos de colegiatura, calificaciones, asistencia	$199 MXN/mes
-Salon de Belleza	Belleza	Citas, servicios, estilistas, productos, historial de cliente, fotos	$149 MXN/mes
-Lavanderia	Servicios	Ordenes, peso/piezas, tracking de prendas, entregas, reclamos	$99 MXN/mes
-Veterinaria	Salud Animal	Pacientes (mascotas), duenos, historial clinico, vacunas, grooming	$199 MXN/mes
-Agrotech	Agricultura	Parcelas, ciclos de cultivo, insumos, rendimiento, clima, costos por hectarea	$299 MXN/mes
-Food Truck	Food Service	Ubicaciones, horarios, menu simplificado, POS mobile, ruta diaria	$99 MXN/mes
-Funeraria	Servicios	Planes, paquetes, servicios, pagos a plazos, documentacion legal	$199 MXN/mes
+10. Disaster Recovery
+Metrica	Objetivo	Como
+RTO (Recovery Time Objective)	<1 hora	Blue-green deployment. Si nueva version falla -> rollback en 2 min. Si AWS region falla -> manual failover a sa-east-1 en <1h
+RPO (Recovery Point Objective)	<5 minutos	RDS automated backups cada 5 min (point-in-time recovery). S3 cross-region replication
+Backup BD	Diario + PITR	RDS automated backups retencion 35 dias. Export semanal a S3 en otra region
+Backup S3	Cross-region	S3 replication us-east-1 -> us-west-2. CFDIs NUNCA se pueden perder (legal)
+Backup Redis	Snapshot diario	ElastiCache automated backup. Redis es cache — si se pierde, se reconstruye
+Monitoring	24/7	PagerDuty: si API p99 > 2s o error rate > 1% -> llamada al on-call en 5 min
+Runbook	Documentado	Paso a paso para cada escenario: DB restore, region failover, PAC switch, Plaid outage
 
-POTENCIAL: Si 500 devs construyen modulos y cada uno tiene 100 clientes promedio pagando $150 MXN/mes, son 50,000 clientes x $30/mes comision = $1.5M USD/ano SOLO de marketplace. Esto sin contar los modulos propios.
+Escenarios y Respuesta
+Escenario	Impacto	Respuesta
+AWS us-east-1 down	Todo el sistema caido	1) CloudFront sigue sirviendo assets. 2) Activar sa-east-1 con ultimo snapshot de BD (<5min data loss). 3) DNS failover via Route53 health check. 4) Tiempo estimado: 30-60 min
+RDS corrupcion	BD inaccesible	Point-in-time recovery al ultimo momento sano. Tiempo: 15-30 min. Data loss: <5 min
+PAC Facturama caido	No se puede timbrar CFDI	Switch automatico a PAC Conectia (ya implementado en Doc 3). Usuarios no notan
+OpenAI API caido	IA no funciona	1) Fallback a Anthropic Claude. 2) Si ambos caen: funciones IA degradan gracefully — categorizacion se pone en queue, asistente muestra 'temporalmente no disponible'
+Plaid caido	Bank sync no funciona	Bank sync CRON detecta error, retry en 1h. Usuarios ven 'Sincronizacion pendiente'. No se pierden datos — se importan al reconectar
+DDoS attack	API lenta o caida	WAF rules pre-configuradas. CloudFront absorbe. Rate limiting agresivo. Si persiste: escalar ECS tasks + activar AWS Shield Advanced
+Data breach sospechado	Datos potencialmente comprometidos	1) Revocar todos los JWT inmediatamente. 2) Forzar re-login de todos. 3) Audit log review. 4) Notificar a orgs afectadas en <72h (GDPR). 5) Post-mortem publico
 
-5. Tabla Maestra: Que Modulos Usa Cada Industria
-Vista rapida. X = activo. V = vertical especifico. - = no aplica.
-Modulo	Cargo	Restaurante	Construccion	Clinica	Retail	Servicios	Hotel
-LIBROS	X	X	X	X	X	X	X
-FACTURA	X	X	X	X	X	X	X
-CONTACTOS	X	X	X	X	X	X	X
-FISCAL	X	X	X	X	X	X	X
-INVENTARIO	-	X	X	X	X	-	X
-NOMINA	X	X	X	X	X	X	X
-PROYECTOS	-	-	X	-	-	X	-
-GASTOS	X	X	X	X	X	X	X
-POS	-	X	-	X	X	-	X
-TIENDA ONLINE	-	-	-	-	X	-	-
-MARKETING	-	-	-	-	X	-	-
-							
-V: Despacho	V	-	-	-	-	-	-
-V: Flota	V	-	-	-	-	-	-
-V: Carta Porte	V	-	-	-	-	-	-
-V: Rutas	V	-	V(rutas obra)	-	-	-	-
-V: Recetas	-	V	-	-	-	-	-
-V: Mesas	-	V	-	-	-	-	-
-V: Delivery	-	V	-	-	V	-	-
-V: Menu Digital	-	V	-	-	-	-	-
-V: Estimaciones	-	-	V	-	-	V	-
-V: Avance Obra	-	-	V	-	-	-	-
-V: Subcontratos	-	-	V	-	-	-	-
-V: Equipo	-	-	V	-	-	-	-
-V: Pacientes	-	-	-	V	-	-	-
-V: Citas	-	-	-	V	-	-	-
-V: Recetas Med	-	-	-	V	-	-	-
-V: Listas Precio	-	-	-	-	V	-	-
-V: Comisiones	-	-	-	-	V	-	V
-V: Propuestas	-	-	-	-	-	V	-
-V: Time Track	-	-	-	-	-	V	-
-V: Contratos	-	-	V	-	-	V	-
-V: Habitaciones	-	-	-	-	-	-	V
-V: Reservaciones	-	-	-	-	-	-	V
-V: Housekeeping	-	-	-	-	-	-	V
+11. Compliance y Regulaciones
+Regulacion	Aplica A	Que Hacer	Prioridad
+LFPDPPP	Mexico — todos los usuarios	Aviso de privacidad en registro. Consentimiento explicito. Derecho de acceso/rectificacion/cancelacion/oposicion (ARCO)	Dia 1
+GDPR	Usuarios EU (si aplica)	Consentimiento cookies. Right to erasure. Data export. DPA template. Privacy by design	Dia 1
+PCI-DSS	Pagos con tarjeta	NO almacenar datos de tarjeta. Usar Stripe.js (datos nunca tocan nuestro server). Stripe es PCI Level 1.	Dia 1 (delegado a Stripe)
+HIPAA	Clinicas con datos de salud (USA)	Nuestro modulo Pacientes es BASICO y NO maneja PHI completo. Disclaimer: 'Este modulo NO reemplaza un EHR certificado HIPAA.' Si quieren HIPAA: BAA con AWS + encriptacion extra.	Fase 3 (si clinicas son mercado grande)
+SOC 2 Type II	Confianza empresarial	Audit anual. Evidencia de controles de seguridad. Necesario para vender a empresas medianas+.	Ano 2
+CFF Art. 30 Mexico	Todos los usuarios MX	Retener XMLs de CFDI por 5 anos MINIMO. S3 lifecycle policy. NUNCA borrar.	Dia 1
+TCPA (USA)	SMS marketing	Opt-in explicito antes de enviar SMS. Opcion de opt-out en cada mensaje. Registro de consentimiento.	Dia 1 (si SMS activo)
+NOM-151 (Mexico)	Conservacion de documentos electronicos	Mensajes de datos conservados en medios electronicos deben mantener integridad. Hash SHA-256 en CFDIs almacenados.	Dia 1
 
-6. El Concepto LEGO - Diagrama Final
-Asi es como el usuario ve la plataforma. Cada pieza es independiente pero encaja con las demas:
-+================================================================+
-|                     PLATAFORMA CORE                            |
-|  [Auth] [Org] [Users] [Billing] [Notif] [Audit] [Hub]  [AI]   |
-+================================================================+
-|                                                                |
-|  MODULOS HORIZONTALES (cualquier industria)                    |
-|  +--------+ +--------+ +--------+ +--------+ +--------+      |
-|  | LIBROS | |FACTURA | |CONTACT.| | FISCAL | | GASTOS |      |
-|  +--------+ +--------+ +--------+ +--------+ +--------+      |
-|  +--------+ +--------+ +--------+ +--------+ +--------+      |
-|  | INVENT.| | NOMINA | |PROYECT.| |  POS   | | TIENDA |      |
-|  +--------+ +--------+ +--------+ +--------+ +--------+      |
-|  +--------+ +--------+                                        |
-|  |SOPORTE | |MARKET. |                                        |
-|  +--------+ +--------+                                        |
-|                                                                |
-+================================================================+
-|                                                                |
-|  MODULOS VERTICALES (por industria)                            |
-|                                                                |
-|  CARGO:    [Despacho] [Flota] [CartaPorte] [Rutas]            |
-|  RESTAUR:  [Recetas] [Mesas] [Delivery] [MenuDigital]         |
-|  CONSTRUC: [Estimac.] [AvanceObra] [Subcontr.] [Equipo]       |
-|  CLINICA:  [Pacientes] [Citas] [RecetasMed]                   |
-|  RETAIL:   [ListasPrec.] [Comisiones]                         |
-|  SERVICIO: [Propuestas] [TimeTrack] [Contratos]               |
-|  HOTEL:    [Habitac.] [Reservac.] [Housekeep.]                |
-|                                                                |
-|  MARKETPLACE: [TallerMec.] [Gym] [Inmob.] [Escuela] [...]    |
-|                                                                |
-+================================================================+
-|                                                                |
-|  INTEGRACIONES EXTERNAS                                       |
-|  [Plaid] [Prometeo] [Stripe] [Facturama] [WhatsApp]           |
-|  [OpenAI] [Google Maps] [Twilio] [SendGrid] [S3]              |
-|                                                                |
-+================================================================+
+12. Plan de Riesgo por Dependencia Externa
+Dependencia	Riesgo	Plan B	Tiempo de Switch
+OpenAI	Sube precios, cambia API, se cae, censura fiscal	Anthropic Claude como fallback. Prompts ya preparados para ambos modelos. A futuro: fine-tune modelo propio con Llama/Mistral	<1 hora (fallback automatico)
+Plaid	Sube de $0.30 a $3+, limita acceso, se cae	MX Labs, Finicity, o Yodlee como alternativa. Abstracion en bank-connect/ package. Cambiar provider = cambiar 1 archivo	1-2 semanas (nuevo provider)
+Prometeo (MX)	Limitado a pocos bancos, pricing alto, se cae	Finerio Connect como alternativa. Mismo patron de abstracion	1-2 semanas
+Facturama (PAC)	Sube precios, se cae, pierde certificacion SAT	Conectia ya implementado como PAC backup. Puede ser promovido a primario en <1 hora	Automatico (circuit breaker)
+Stripe	Cambia pricing, bloquea cuenta, no opera en nuevo pais	Conekta (MX), MercadoPago (LATAM) como alternativas. Billing abstraction layer.	2-4 semanas
+Twilio	Sube precios SMS/WhatsApp	Vonage, MessageBird, o WhatsApp Business API directo (sin intermediario)	1-2 semanas
+AWS	Outage regional, precio sube	Multi-cloud readiness: Docker containers son portables. Terraform permite reconstruir en GCP o Azure. BD: RDS -> Cloud SQL	1-3 meses (migracion completa)
+ElevenLabs	Sube precios TTS, cambia calidad	Google Cloud TTS o Amazon Polly como alternativa. API similar.	1-2 dias
 
-CADA NEGOCIO SELECCIONA SUS PIEZAS:
-
-  Taqueria 'El Gordo':     CORE + LIBROS + FACTURA + FISCAL + POS + RECETAS
-  Cargo 'Transportes Cruz': CORE + LIBROS + FACTURA + FISCAL + DESPACHO + FLOTA
-  Agencia 'Pixel Studio':  CORE + LIBROS + FACTURA + FISCAL + PROYECTOS + TIME TRACK
-  Dentista 'Dra. Garcia':  CORE + LIBROS + FACTURA + FISCAL + PACIENTES + CITAS
-  Ferreteria 'Don Jose':   CORE + LIBROS + FACTURA + FISCAL + INVENTARIO + POS
+REGLA ARQUITECTONICA: Toda dependencia externa DEBE estar detras de una interface/abstraction layer. NUNCA llamar APIs externas directamente desde los modulos de negocio. Siempre pasar por un adapter en packages/ que se puede swappear sin tocar logica de negocio.
 
-7. Schema de Base de Datos - Modulo Vertical Ejemplo: DESPACHO
-Para que el developer vea EXACTAMENTE como se estructura un modulo vertical en la BD.
-despacho.shipments
-Columna	Tipo	Descripcion
-id	UUID PK	
-org_id	UUID FK -> core.organizations	Multi-tenant
-shipment_number	VARCHAR(20)	Numero de guia autoincremental
-status	ENUM('draft','pickup_scheduled','picked_up','in_transit','out_for_delivery','delivered','returned','cancelled')	
-sender_contact_id	UUID FK -> contactos.contacts	Remitente
-receiver_name	VARCHAR(255)	Nombre destinatario
-receiver_phone	VARCHAR(20)	Telefono destinatario
-receiver_email	VARCHAR(255) NULLABLE	
-origin_address	JSONB	Direccion de recoleccion
-destination_address	JSONB	Direccion de entrega
-origin_city	VARCHAR(100)	Para busqueda rapida
-destination_city	VARCHAR(100)	Para busqueda rapida
-distance_km	DECIMAL(10,2) NULLABLE	Distancia calculada
-weight_kg	DECIMAL(10,2) NULLABLE	Peso de la carga
-volume_m3	DECIMAL(10,4) NULLABLE	Volumen
-pieces	INT DEFAULT 1	Numero de bultos
-description	VARCHAR(500)	Descripcion de la mercancia
-declared_value	DECIMAL(15,2) NULLABLE	Valor declarado (para seguro)
-service_type	ENUM('standard','express','same_day','freight')	
-price	DECIMAL(15,2)	Precio cobrado
-cost	DECIMAL(15,2) DEFAULT 0	Costo real (combustible, operador)
-vehicle_id	UUID FK NULLABLE -> despacho.vehicles	Unidad asignada
-driver_contact_id	UUID FK NULLABLE -> contactos.contacts	Chofer (type=employee)
-route_id	UUID FK NULLABLE -> despacho.routes	Ruta asignada
-pickup_date	TIMESTAMP NULLABLE	Fecha/hora de recoleccion
-estimated_delivery	TIMESTAMP NULLABLE	Fecha estimada de entrega
-actual_delivery	TIMESTAMP NULLABLE	Fecha real de entrega
-proof_of_delivery	VARCHAR(500) NULLABLE	Foto/firma de entrega en S3
-invoice_id	UUID FK NULLABLE -> factura.invoices	Factura generada
-notes	TEXT NULLABLE	
-metadata	JSONB DEFAULT '{}'	Data extra flexible
-created_at	TIMESTAMP	
-updated_at	TIMESTAMP	
+13. Cierre — Estado Final de la Documentacion
+10 DOCUMENTOS. 0 HUECOS.
+DOC 1: Producto + mercado. DOC 2: Go-to-market. DOC 3: Schemas BD core + APIs + integraciones. DOC 4: Ecosistema + Event Bus. DOC 5: Modular por industria. DOC 6: Catalogo 45+ modulos. DOC 7: UX + interfaces por rol + demo data + CRM. DOC 8: Permisos 3 capas + jerarquia. DOC 9: Multi-moneda, templates, migracion, CRON, DevOps, testing, IA, security, mobile, API. DOC 10 (ESTE): State machines + 60 tablas BD + 12 prompts IA + validaciones + edge cases + costos + design system + TypeScript + escalabilidad + DR + compliance + dependency risk.
 
-despacho.tracking_events
-Columna	Tipo	Descripcion
-id	UUID PK	
-shipment_id	UUID FK -> despacho.shipments	
-status	VARCHAR(50)	Estado en ese momento
-location	JSONB NULLABLE	{ lat, lng, address }
-description	VARCHAR(300)	Ej: Paquete recolectado en bodega
-photo_url	VARCHAR(500) NULLABLE	Evidencia fotografica
-recorded_by	UUID FK -> core.users	Quien registro el evento
-created_at	TIMESTAMP	
-
-despacho.vehicles
-Columna	Tipo	Descripcion
-id	UUID PK	
-org_id	UUID FK	
-plate_number	VARCHAR(15)	Placas
-type	ENUM('van','truck','trailer','motorcycle')	
-brand	VARCHAR(100)	Marca
-model	VARCHAR(100)	Modelo
-year	INT	Ano
-capacity_kg	DECIMAL(10,2)	Capacidad de carga
-capacity_m3	DECIMAL(10,2) NULLABLE	Capacidad volumetrica
-fuel_type	ENUM('gasoline','diesel','electric','hybrid')	
-current_km	INT	Kilometraje actual
-next_maintenance_km	INT NULLABLE	Proximo servicio
-insurance_expiry	DATE NULLABLE	Vencimiento de seguro
-permit_sct	VARCHAR(50) NULLABLE	Permiso SCT (MX)
-status	ENUM('available','in_route','maintenance','inactive')	
-current_driver_id	UUID FK NULLABLE -> contactos.contacts	Chofer asignado
-gps_device_id	VARCHAR(100) NULLABLE	ID del GPS tracker
-photo_url	VARCHAR(500) NULLABLE	
-documents	JSONB DEFAULT '[]'	Array de docs: seguro, tarjeta circ, verificacion
-created_at	TIMESTAMP	
-
-8. Flujo de Onboarding por Industria
-PANTALLA 1: Bienvenido a TuContabilidad
-  -> Registrate con email o Google
-
-PANTALLA 2: Cuentanos de tu negocio
-  -> Nombre del negocio
-  -> Pais (US / MX / CO)
-  -> INDUSTRIA (selector visual con iconos):
-     [Camion] Transporte / Cargo
-     [Tenedor] Restaurante / Food Service
-     [Casco] Construccion / Contratista
-     [Cruz] Clinica / Salud
-     [Bolsa] Tienda / Retail
-     [Laptop] Servicios / Agencia
-     [Cama] Hotel / Hospedaje
-     [Engrane] Otro (personalizado)
-
-PANTALLA 3: Te recomendamos estos modulos
-  -> Basado en industria, mostramos modulos PRE-SELECCIONADOS
-  -> Ejemplo si eligio 'Transporte':
-     [x] Libros (Contabilidad)      INCLUIDO
-     [x] Factura (Facturacion)       INCLUIDO
-     [x] Contactos (CRM)             INCLUIDO
-     [x] Fiscal (Impuestos)          INCLUIDO
-     [x] Despacho                    +$14.99/mes
-     [x] Flota                       +$9.99/mes
-     [ ] Carta Porte                 +$9.99/mes
-     [x] Gastos                      +$4.99/mes
-     [x] Nomina                      +$9.99/mes
-     ----------------------------------
-     Total: $19.99 base + $39.96 modulos = $59.95/mes
-     vs Zoho One: $225/mes (5 empleados)
-     vs Odoo: $360/mes (5 empleados)
-
-  -> Boton: 'Empezar 30 dias gratis con todo'
-
-PANTALLA 4: Datos fiscales (segun pais)
-  -> US: EIN, estado, tipo entidad
-  -> MX: RFC, regimen, CP fiscal
-
-PANTALLA 5: Conectar banco (opcional)
-  -> US: Plaid widget
-  -> MX: Prometeo/Finerio widget
-  -> Skip: 'Lo hago despues'
-
-PANTALLA 6: Listo! Tu dashboard esta listo
-  -> Hub con widgets de los modulos activados
-  -> Tutorial interactivo de 3 pasos
-  -> CTA: 'Crea tu primera factura' o 'Registra tu primer envio'
-
-9. Resumen Ejecutivo
-QUE ESTAMOS CONSTRUYENDO
-Un SISTEMA OPERATIVO DE NEGOCIOS modular, bilingue, con IA, que cualquier PYME de cualquier industria en USA o LATAM puede configurar a su medida. Core universal + 12 modulos horizontales + modulos verticales por industria + marketplace para terceros. Como Dolibarr pero moderno. Como Zoho pero en espanol y 5x mas barato. Como Odoo pero mobile-first y con fiscalidad real de LATAM y USA.
-
-QUE TIENE EL DEVELOPER AHORA (5 Documentos)
-(1) Especificaciones de Producto - analisis competitivo, datos de mercado, funcionalidades detalladas. (2) Estrategia Go-to-Market - canales, pricing, proyecciones por mercado. (3) Guia Tecnica de Implementacion - DB schemas, APIs, integraciones, prompts IA, flujos. (4) Blueprint del Ecosistema - arquitectura de Event Bus, sync entre modulos, estructura del monorepo, roadmap 24 meses. (5) ESTE DOCUMENTO - arquitectura modular por industria, configuraciones, modulos verticales, marketplace, onboarding dinamico.
-
-Con estos 5 documentos, un equipo de fullstack developers puede construir la plataforma completa sin necesitar mas especificaciones. Todo esta definido: que tablas, que eventos, que endpoints, que modulos, que industrias, en que orden, y cuanto cobrar.
+Un equipo fullstack abre estos 10 documentos y tiene TODO para construir un ERP completo que compite con Zoho One, ERPNext, Dolibarr, y QuickBooks — pero mejor en todo y a una fraccion del precio. Cero preguntas. Cero improvisacion. Solo ejecutar.
 
 
---- FIN DEL DOCUMENTO ---
+--- FIN DE TODA LA DOCUMENTACION ---
